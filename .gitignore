@@ -1,0 +1,37 @@
+# Local runtime data (SQLite DB, local object storage, exports)
+var/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Team templates contain internal bank data (screenshots, names, URLs).
+# They are NOT committed by default — copy them into templates/source/ on each machine.
+# See templates/source/README.md.
+templates/source/*
+!templates/source/README.md
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+
+# OS / editors
+.DS_Store
+Thumbs.db
+~$*
+.idea/

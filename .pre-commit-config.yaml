@@ -1,0 +1,23 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: [--fix]
+        files: ^services/api/
+      - id: ruff-format
+        files: ^services/api/
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        entry: uv --directory services/api run mypy
+        language: system
+        pass_filenames: false
+        files: ^services/api/app/
+      - id: web-lint
+        name: eslint + prettier
+        entry: bash -c "cd apps/web && npm run lint && npm run format:check"
+        language: system
+        pass_filenames: false
+        files: ^apps/web/

@@ -1,0 +1,59 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --background: #ffffff;
+  --foreground: #0f172a;
+  --muted: #f1f5f9;
+  --muted-foreground: #64748b;
+  --border: #e2e8f0;
+  --input: #cbd5e1;
+  --ring: #c00000;
+  --primary: #c00000; /* team template label red */
+  --primary-foreground: #ffffff;
+  --card: #ffffff;
+  --destructive: #dc2626;
+
+  /* Status palette — must match the workbook palette (app/core/enums.py). */
+  --status-passed: #00b050;
+  --status-failed: #ff0000;
+  --status-not-tested: #a6a6a6;
+  --status-suspended: #ffc000;
+  --status-modification: #7030a0;
+  --status-blocked: #c55a11;
+}
+
+.dark {
+  --background: #0b1120;
+  --foreground: #e2e8f0;
+  --muted: #1e293b;
+  --muted-foreground: #94a3b8;
+  --border: #1e293b;
+  --input: #334155;
+  --ring: #f4735e;
+  --primary: #e0483a;
+  --primary-foreground: #ffffff;
+  --card: #111827;
+  --destructive: #f87171;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-card: var(--card);
+  --color-destructive: var(--destructive);
+  --font-sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}

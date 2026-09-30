@@ -1,0 +1,78 @@
+"""Single source of truth for shared enums (PRD §3.3). Reuse these everywhere."""
+
+from enum import StrEnum
+
+
+class TestStatus(StrEnum):
+    PASSED = "Passed"
+    FAILED = "Failed"
+    NOT_TESTED = "Not Tested"
+    SUSPENDED = "Suspended"
+    MODIFICATION = "Modification"
+    BLOCKED = "Blocked"
+
+
+# Default status palette (admin-editable at runtime via app_settings, PRD §3.1 / ADM-EX-3).
+DEFAULT_STATUS_PALETTE: dict[TestStatus, dict[str, str]] = {
+    TestStatus.PASSED: {"fill": "00B050", "font": "FFFFFF"},
+    TestStatus.FAILED: {"fill": "FF0000", "font": "FFFFFF"},
+    TestStatus.NOT_TESTED: {"fill": "A6A6A6", "font": "FFFFFF"},
+    TestStatus.SUSPENDED: {"fill": "FFC000", "font": "FFFFFF"},
+    TestStatus.MODIFICATION: {"fill": "7030A0", "font": "FFFFFF"},
+    TestStatus.BLOCKED: {"fill": "C55A11", "font": "FFFFFF"},
+}
+
+# Report mapping: Un-executed = Not Tested + Blocked; Modification-Requiring = Modification.
+UNEXECUTED_STATUSES: frozenset[TestStatus] = frozenset({TestStatus.NOT_TESTED, TestStatus.BLOCKED})
+
+
+class Role(StrEnum):
+    ADMIN = "admin"
+    USER = "user"
+    VIEWER = "viewer"
+
+
+class CaseSection(StrEnum):
+    DEFAULT = "default"
+    FUNCTIONAL = "functional"
+
+
+class CaseSource(StrEnum):
+    DEFAULT = "default"
+    AI = "ai"
+    MANUAL = "manual"
+    RUN = "run"
+
+
+class ExecutionMode(StrEnum):
+    MANUAL = "manual"
+    AUTOMATED = "automated"
+
+
+class Priority(StrEnum):
+    P1 = "P1"
+    P2 = "P2"
+    P3 = "P3"
+    P4 = "P4"
+
+
+class Severity(StrEnum):
+    CRITICAL = "Critical"
+    HIGH = "High"
+    MEDIUM = "Medium"
+    LOW = "Low"
+
+
+class RunTarget(StrEnum):
+    WEB = "web"
+    API = "api"
+    ANDROID = "android"
+
+
+class RunStatus(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    PASSED = "passed"
+    FAILED = "failed"
+    ERROR = "error"
+    CANCELLED = "cancelled"
