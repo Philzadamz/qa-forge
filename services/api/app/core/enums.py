@@ -4,6 +4,7 @@ from enum import StrEnum
 
 
 class TestStatus(StrEnum):
+    __test__ = False  # not a pytest test class, despite the name
     PASSED = "Passed"
     FAILED = "Failed"
     NOT_TESTED = "Not Tested"
@@ -76,3 +77,48 @@ class RunStatus(StrEnum):
     FAILED = "failed"
     ERROR = "error"
     CANCELLED = "cancelled"
+
+
+class TemplateKind(StrEnum):
+    XLSX_TEST_CASES = "xlsx_test_cases"
+    DOCX_REPORT = "docx_report"
+
+
+class TemplateStatus(StrEnum):
+    __test__ = False  # not a pytest test class, despite the name
+    DRAFT = "draft"
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+
+
+class StorySource(StrEnum):
+    UPLOAD = "upload"
+    PASTE = "paste"
+    URL = "url"
+
+
+class SuiteStatus(StrEnum):
+    DRAFT = "draft"
+    IN_REVIEW = "in_review"
+    FINAL = "final"
+
+
+class GenerationJobStatus(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class EvidenceKind(StrEnum):
+    SCREENSHOT = "screenshot"
+    REQUEST_LOG = "request_log"
+    VIDEO = "video"
+    FILE = "file"
+
+
+class BugStatus(StrEnum):
+    OPEN = "open"
+    FIXED = "fixed"
+    RETESTED = "retested"
+    CLOSED = "closed"

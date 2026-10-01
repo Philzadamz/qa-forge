@@ -6,7 +6,7 @@ WEB_DIR := apps/web
 UV := uv --directory $(API_DIR)
 
 .PHONY: help install dev dev-api dev-web migrate test test-api test-web lint lint-api lint-web \
-        format typecheck up down seed-admin
+        format typecheck up down seed-admin seed-defaults seed-report-defaults
 
 help:
 	@echo "install     Install API (uv) and web (npm) dependencies"
@@ -15,6 +15,8 @@ help:
 	@echo "test        Run all tests"
 	@echo "lint        Run ruff, mypy, eslint, prettier, tsc"
 	@echo "up / down   Start / stop the full Docker Compose stack"
+	@echo "seed-admin EMAIL=... PASSWORD=...   Create the first admin user"
+	@echo "seed-defaults                        Import the 31 default scenarios from the team template"
 
 install:
 	$(UV) sync
@@ -61,6 +63,11 @@ up:
 down:
 	docker compose down
 
-# Implemented in Phase 1.
 seed-admin:
 	$(UV) run python -m app.cli seed-admin --email "$(EMAIL)" --password "$(PASSWORD)"
+
+seed-defaults:
+	$(UV) run python -m app.cli seed-defaults
+
+seed-report-defaults:
+	$(UV) run python -m app.cli seed-report-defaults

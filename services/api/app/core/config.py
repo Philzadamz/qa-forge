@@ -46,6 +46,18 @@ class Settings(BaseSettings):
 
     templates_dir: Path = REPO_ROOT / "templates"
 
+    # AI (PRD §8, ADM-AI-1). Provider is swappable — DeepSeek for now, Anthropic once a key
+    # is available for production (docs/decisions/004) — without touching pipeline code.
+    ai_provider: Literal["deepseek", "anthropic", "fake"] = "fake"
+    deepseek_api_key: str | None = None
+    deepseek_base_url: str = "https://api.deepseek.com"
+    anthropic_api_key: str | None = None
+    ai_model_generation: str = "deepseek-chat"
+    ai_model_drafting: str = "deepseek-chat"
+    ai_model_light: str = "deepseek-chat"
+    ai_temperature: float = 0.2
+    ai_max_output_tokens: int = 8192
+
 
 @lru_cache
 def get_settings() -> Settings:

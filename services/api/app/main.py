@@ -6,7 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import get_settings
 from app.core.errors import install_error_handlers
 from app.core.logging import REQUEST_ID_HEADER, RequestIdMiddleware, configure_logging
-from app.routers import health
+from app.routers import auth, bugs, cases, health, projects, reports, stories, suites, types
+from app.routers.admin import router as admin_router
 
 
 def create_app() -> FastAPI:
@@ -33,6 +34,15 @@ def create_app() -> FastAPI:
     # Probes at the root (for orchestrators) and under the API prefix (for the web app proxy).
     app.include_router(health.router)
     app.include_router(health.router, prefix=settings.api_prefix)
+    app.include_router(auth.router, prefix=settings.api_prefix)
+    app.include_router(admin_router, prefix=settings.api_prefix)
+    app.include_router(types.router, prefix=settings.api_prefix)
+    app.include_router(projects.router, prefix=settings.api_prefix)
+    app.include_router(stories.router, prefix=settings.api_prefix)
+    app.include_router(suites.router, prefix=settings.api_prefix)
+    app.include_router(cases.router, prefix=settings.api_prefix)
+    app.include_router(bugs.router, prefix=settings.api_prefix)
+    app.include_router(reports.router, prefix=settings.api_prefix)
     return app
 
 

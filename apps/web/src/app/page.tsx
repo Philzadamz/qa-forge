@@ -1,6 +1,8 @@
 import { redirect } from "next/navigation";
 
-export default function Home() {
-  // Until the workspace exists (Phase 1), everyone lands on sign-in.
-  redirect("/login");
+import { getCurrentUser } from "@/lib/server-api";
+
+export default async function Home() {
+  const user = await getCurrentUser();
+  redirect(user ? "/dashboard" : "/login");
 }
