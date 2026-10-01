@@ -75,6 +75,7 @@ def _snapshot_and_create_default_cases(db: Session, suite: TestSuite, type_id: u
                 actual_result="",
                 status=TestStatus.NOT_TESTED,
                 evidence_group=default.evidence_group,
+                tags=list(default.tags),
                 source=CaseSource.DEFAULT,
                 default_case_id=default.id,
                 included=True,

@@ -27,6 +27,7 @@ import type {
 
 import { BugsPanel } from "./bugs-panel";
 import { CaseEvidence } from "./case-evidence";
+import { TestLabPanel } from "./test-lab-panel";
 
 const COVERAGE_DEPTHS = ["Essential", "Standard", "Exhaustive"] as const;
 const STATUS_VALUES: TestStatusValue[] = [
@@ -49,6 +50,8 @@ function CaseCard({
   onDelete,
   onPatch,
   onDraftBug,
+  selectedForRun,
+  onToggleForRun,
 }: {
   c: WorkspaceCase;
   onToggleInclude: (id: string, included: boolean) => void;
@@ -58,6 +61,8 @@ function CaseCard({
     patch: Partial<Pick<WorkspaceCase, "status" | "actual_result" | "is_regression">>,
   ) => void;
   onDraftBug: (id: string) => void;
+  selectedForRun: boolean;
+  onToggleForRun: (id: string, checked: boolean) => void;
 }) {
   const statusVariant =
     c.status === "Passed" ? "success" : c.status === "Failed" ? "destructive" : "muted";
@@ -91,6 +96,13 @@ function CaseCard({
               <Checkbox
                 checked={c.included}
                 onChange={(e) => onToggleInclude(c.id, e.target.checked)}
+              />
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              Run in Test Lab
+              <Checkbox
+                checked={selectedForRun}
+                onChange={(e) => onToggleForRun(c.id, e.target.checked)}
               />
             </label>
             <Button variant="destructive" size="sm" onClick={() => onDelete(c.id)}>
@@ -165,6 +177,16 @@ export function SuiteDetailClient({ suiteId }: { suiteId: string }) {
   const [progressLines, setProgressLines] = useState<string[]>([]);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const [selectedForRun, setSelectedForRun] = useState<Set<string>>(new Set());
+
+  function toggleForRun(id: string, checked: boolean) {
+    setSelectedForRun((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
 
   const casesKey = ["suites", suiteId, "cases"];
 
@@ -378,6 +400,8 @@ export function SuiteDetailClient({ suiteId }: { suiteId: string }) {
               onDelete={(id) => deleteCase.mutate(id)}
               onPatch={(id, patch) => patchCase.mutate({ id, patch })}
               onDraftBug={(id) => draftBug.mutate(id)}
+              selectedForRun={selectedForRun.has(c.id)}
+              onToggleForRun={toggleForRun}
             />
           ))}
         </div>
@@ -505,11 +529,20 @@ export function SuiteDetailClient({ suiteId }: { suiteId: string }) {
                 onDelete={(id) => deleteCase.mutate(id)}
                 onPatch={(id, patch) => patchCase.mutate({ id, patch })}
                 onDraftBug={(id) => draftBug.mutate(id)}
+                selectedForRun={selectedForRun.has(c.id)}
+                onToggleForRun={toggleForRun}
               />
             ))}
           </div>
         </div>
       )}
+
+      <TestLabPanel
+        suiteId={suiteId}
+        projectId={suite.project_id}
+        selectedCaseIds={[...selectedForRun]}
+        onRunStarted={() => setSelectedForRun(new Set())}
+      />
 
       <BugsPanel suiteId={suiteId} />
     </div>

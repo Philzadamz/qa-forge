@@ -99,6 +99,7 @@ export interface WorkspaceCase {
   is_duplicate: boolean;
   execution_mode: "manual" | "automated" | null;
   sort_order: number;
+  request_plan: Record<string, unknown> | null;
 }
 
 export interface Evidence {
@@ -192,4 +193,84 @@ export interface Report {
   fields_json: ReportFields;
   version: number;
   created_at: string;
+}
+
+export type SecretKind = "password" | "token" | "api_key" | "oauth_client";
+
+export interface Secret {
+  id: string;
+  project_id: string;
+  name: string;
+  kind: SecretKind;
+  created_at: string;
+}
+
+export type RunStatus = "queued" | "running" | "passed" | "failed" | "error" | "cancelled";
+export type RunStepOutcomeValue = "pass" | "fail" | "skip" | "error";
+
+export interface RunCaseResult {
+  status: TestStatusValue;
+  actual_result: string;
+  confidence: number;
+  mode: "agent" | "script" | "deterministic";
+  applied: boolean;
+}
+
+export interface RunSummary {
+  total?: number;
+  passed?: number;
+  failed?: number;
+  blocked?: number;
+  cases?: Record<string, RunCaseResult>;
+}
+
+export interface Run {
+  id: string;
+  suite_id: string | null;
+  project_id: string;
+  target: "web" | "api" | "android";
+  status: RunStatus;
+  config_json: Record<string, unknown>;
+  guidance_text: string;
+  selected_case_ids: string[];
+  started_at: string | null;
+  finished_at: string | null;
+  summary_json: RunSummary;
+  error: string | null;
+  created_at: string;
+}
+
+export interface EndpointParam {
+  name: string;
+  location: "path" | "query" | "header";
+  required: boolean;
+  schema_type: string;
+}
+
+export interface EndpointInfo {
+  method: string;
+  path: string;
+  summary: string;
+  parameters: EndpointParam[];
+  request_body_schema: Record<string, unknown> | null;
+  response_schemas: Record<string, Record<string, unknown>>;
+}
+
+export interface EndpointCatalogue {
+  base_url: string | null;
+  endpoints: EndpointInfo[];
+}
+
+export interface RunStep {
+  id: string;
+  test_case_id: string | null;
+  seq: number;
+  action: string;
+  target: string | null;
+  input_masked: string | null;
+  assertion: string | null;
+  outcome: RunStepOutcomeValue;
+  message: string | null;
+  screenshot_evidence_id: string | null;
+  duration_ms: number | null;
 }

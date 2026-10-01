@@ -12,7 +12,7 @@ class Evidence(IdMixin, TimestampMixin, Base):
     __tablename__ = "evidence"
 
     test_case_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("test_cases.id"), index=True)
-    run_id: Mapped[uuid.UUID | None] = mapped_column(default=None)  # test_runs lands in Phase 5
+    run_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("test_runs.id"), default=None)
     kind: Mapped[EvidenceKind] = mapped_column(
         SAEnum(EvidenceKind, native_enum=False, length=20), default=EvidenceKind.SCREENSHOT
     )

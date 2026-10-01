@@ -16,6 +16,8 @@ import { ApiError, apiFetch } from "@/lib/api";
 import { pasteStorySchema, type PasteStoryInput } from "@/lib/schemas/workspace";
 import type { Project, Story, Suite } from "@/lib/types/workspace";
 
+import { SecretsPanel } from "./secrets-panel";
+
 export function ProjectDetailClient({ projectId }: { projectId: string }) {
   const queryClient = useQueryClient();
   const [showPaste, setShowPaste] = useState(false);
@@ -169,6 +171,8 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
           ))}
         </CardContent>
       </Card>
+
+      <SecretsPanel projectId={projectId} />
     </div>
   );
 }

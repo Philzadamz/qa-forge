@@ -273,3 +273,185 @@ catching the SDK base exceptions inside both clients' `complete_json` and re-rai
 **Next**
 Phase 5 — Test Lab: Web (agent mode + script mode, deterministic defaults run against
 `infra/demo-target`).
+
+## Phase 5 — Test Lab: Web (2026-10-01)
+
+**Built**
+- `infra/demo-target/` (PRD §13.6): a tiny FastAPI app — login (valid/invalid/blank/lockout),
+  a session-gated dashboard, logout, fixed security headers — used as the Web runner's target
+  by both the deterministic routines and the live integration tests. Not a product; a stable
+  fixture.
+- Secrets (`app/models/secret.py`, `app/core/crypto.py`): project-scoped, write-only
+  credentials, Fernet-encrypted at rest (explicit `SECRETS_KEY` in any shared environment; a
+  deterministic dev fallback derived from `jwt_secret` otherwise, so local dev needs no extra
+  `.env` value — docs/decisions/001's spirit). Never returned in any response.
+- Execution engine (`app/services/execution/`):
+  - `agent_client.py` — a tool-calling client (DeepSeek/OpenAI-compatible function calling;
+    Anthropic explicitly not implemented, same scope cut as docs/decisions/004, now also
+    documented as the right call by docs/decisions/005's lesson — an untested stub is a worse
+    failure mode than a clear error).
+  - `tools.py` — Playwright-backed tools (`navigate`, `snapshot`, `click`, `fill`, `select`,
+    `press`, `wait_for`, `assert_visible`, `assert_url`, `back`, `go_idle`), URL-allowlisted,
+    addressable by either a `snapshot()` ref or a raw CSS selector (docs/decisions/006).
+  - `agent.py` — the agent loop (PRD §8.4): system prompt, per-step `RunStep`-shaped events,
+    `fill`'s `secret_ref` resolved server-side and never put in any message sent to the model
+    or stored in any log.
+  - `deterministic.py` — built-in routines (login valid/invalid, blank fields, logout+back,
+    security headers) selected by a tag on `default_test_cases.tags` (reuses the existing
+    field rather than adding an ADM-DC-7 "Automatable" column/admin UI — out of scope here).
+  - `script_mode.py` — freezes a passing agent run's tool calls (never a resolved secret
+    value) into `TestCase.automation_script`; replays without the LLM; self-heals to agent
+    mode on replay failure.
+  - `execution_runner.py` — orchestrates a run: fresh browser context per case, script mode →
+    deterministic routine → agent mode in that order, SSE progress (`run_events.py`,
+    cooperative cancellation between cases).
+- API: `CRUD /secrets`, `POST /runs`, `GET /runs/{id}`, `GET /runs/{id}/steps`,
+  `GET /runs/{id}/events` (SSE), `POST /runs/{id}/cancel`, `POST /runs/{id}/apply`,
+  `GET /suites/{id}/runs`.
+- **Review-before-apply** (PRD §7.6, §15's "AI marks a failing test as passed" risk): a run's
+  per-case verdict lives only in `TestRun.summary_json` until `POST /runs/{id}/apply` writes
+  `status`/`actual_result`/`execution_mode`/`last_run_id` onto the `TestCase` row. Evidence
+  screenshots ARE attached live (needed for the live view and the step audit trail) — scoped
+  deliberately to gate the verdict, not supporting images; documented in
+  `execution_runner.py`'s own docstring.
+- Frontend: a "Run in Test Lab" selection on each case card + a Test Lab panel on the suite
+  page (target URL, start run, past-run history); a run detail page (`/runs/[id]`) with a live
+  SSE log while running, a per-case results/apply view once finished, and a full step log with
+  screenshot thumbnails; a Secrets panel on the project page.
+
+**Four real bugs caught by testing, not reasoning about the code:**
+1. `infra/demo-target`'s `/login` and `/dashboard` routes return `HTMLResponse | RedirectResponse`
+   — FastAPI can't build a Pydantic response model for a Response-subclass union and raised
+   `FastAPIError` at route-registration time. Never caught until the first live Playwright test
+   actually imported and ran the app (nothing before Phase 5 had executed this file at all).
+   Fixed with `response_model=None` on both routes.
+2. `BrowserTools._locator` only ever wrapped its argument as a `[data-qa-ref="..."]` snapshot
+   ref — every deterministic routine (written against real CSS selectors like `#username`)
+   timed out against a real page, because `#username` became the nonsensical selector
+   `[data-qa-ref="#username"]`. The fake-tools unit tests couldn't catch this (they don't model
+   real selector resolution); only the live Chromium + demo-target integration tests could.
+   Fixed by shape-detecting snapshot refs (`^e\d+$`) vs. passing anything else straight to
+   `page.locator()` — docs/decisions/006.
+3. The `logout_back_button` routine legitimately failed on first run: demo-target's dashboard
+   had no `Cache-Control` header, so the browser's back/forward cache restored it after logout
+   even though the server-side session was gone. A real finding, not a test bug — fixed by
+   adding `Cache-Control: no-store, must-revalidate` to the dashboard response, which is what
+   a real authenticated page should send regardless.
+4. `POST /runs/{id}/apply` looked correct and passed a 200 — but silently never persisted
+   `applied: true`. `case_results = dict(cases_field)` only shallow-copies the outer dict; the
+   nested per-case dicts stayed the same objects already referenced by `run.summary_json`, so
+   mutating `result["applied"] = True` also mutated the "old" value SQLAlchemy's dirty-check
+   compares against. Old and new ended up `==`, no UPDATE was ever issued, and `db.refresh()`
+   silently restored `applied: false`. Caught only by the full live integration test asserting
+   on the *response body* of a second read, not just the 200 status. Fixed with
+   `copy.deepcopy`.
+
+**Deferred, documented, not silently dropped:**
+- API and Android targets (Phase 6/7 per the PRD's own plan) — the UI's `target` is fixed to
+  `web`; `POST /runs` 400s on anything else.
+- Standalone "exploratory run" (guidance-only, no suite, "Save as suite" later) — runs require
+  a `suite_id` and at least one existing case in this phase.
+- Manual OTP / 2FA pause (`POST /runs/{id}/input`) — not built; `go_idle` and the allowlist are
+  the only session-related tooling so far.
+- ADM-DC-7's admin-configurable "Automatable" hint/selector UI — deterministic routines are
+  selected via a tag convention on the existing `tags` field and are hard-coded against
+  `infra/demo-target`'s markup specifically; running one against an arbitrary project URL
+  isn't implemented.
+- Evidence from a run that's never applied stays attached to the case (visible in exports)
+  until deleted by hand — see the review-before-apply note above.
+
+**Verified**
+- 326 pytest tests (was 267 at the end of Phase 4, +59: crypto, agent loop, deterministic
+  routines, script mode — all with fake doubles — plus live Playwright + real demo-target
+  integration tests for `BrowserTools`, every deterministic routine, and the full
+  run → apply → evidence flow), 1 skipped, ruff + mypy --strict clean. Frontend
+  typecheck/lint/format/build clean, 10 vitest tests passing.
+- Full browser walkthrough (Playwright, headless, against the real dev DB): login → project
+  with a secret → suite created from a type with a `deterministic:login_valid`-tagged default
+  → select the case for a Test Lab run → live view while running → results with the case
+  Passed → Apply → confirmed in the database that the case's status/actual_result/
+  execution_mode/last_run_id were written, and that a real evidence screenshot (valid PNG) was
+  attached. Zero console errors or 5xx responses.
+
+**Next**
+Phase 6 — Test Lab: API (OpenAPI/Postman/cURL parsing; generated + executed cases against a
+Prism mock; masked request/response logs as evidence images; Postman/pytest export).
+
+## Phase 6 — Test Lab: API (2026-10-01)
+
+**Built**
+- `infra/demo-api/` (PRD §13.6, scope note in docs/decisions/007): a small real FastAPI
+  "petty cash transfers" API — Bearer auth, a transfer limit, idempotent-by-reference creates,
+  owner-scoped reads (IDOR-testable) — standing in for the PRD's suggested Prism-from-a-spec
+  mock, since a real app's own `/openapi.json` is both the spec source and a genuinely
+  stateful target, which a static mock can't be for categories like idempotency and IDOR.
+- Spec parsing (`app/services/execution/api_spec.py`, `POST /api-specs/parse`): OpenAPI
+  (JSON/YAML, local `$ref` resolution), Postman collection v2.1 (recursive folder walk), and
+  pasted cURL commands, all normalized to the same `EndpointCatalogue`.
+- AI generation (`app/services/ai/generate_api.py`, `POST /suites/{id}/generate-api-cases`):
+  one call per selected endpoint, producing both the human-readable case (feature/scenario/
+  steps/expected, across the PRD's 11 API test categories) and its compiled, executable
+  `RequestPlan` in the same structured call — unlike Web, API execution is always
+  deterministic httpx once a case has a plan, so there's no separate analyze-then-generate
+  split or agent-mode ambiguity to design for.
+- Execution (`app/services/execution/api_runner.py`, `api_execution_runner.py`): `{{var}}`
+  chaining across cases in a run (an earlier case's `extract`ed values feed a later case's
+  path/headers/query/body **and assertions**), assertions (status/JSON-path/schema/header/
+  latency), masked request+response logs rendered to a monospace PNG (`log_image.py`) for the
+  xlsx evidence sheet **and** stored as a separate text evidence file — both artifacts PRD
+  §7.6.2 step 5 asks for. Reuses the Phase 5 run/apply/SSE/cancel infrastructure (`TestRun`,
+  `RunStep`, review-before-apply) almost entirely unchanged — only the orchestration loop
+  (httpx instead of Playwright, one step per case instead of many) and the target-dispatch in
+  `POST /runs` are new.
+- Export (`app/services/docengine/api_export.py`): Postman collection v2.1 and a pytest file,
+  generated from a suite's API-section cases.
+- Frontend: an API-spec-to-test-cases panel (source picker, file/URL/cURL input, parsed
+  endpoint checklist, guidance, generate) and a Target (Web/API) selector on the suite's Test
+  Lab panel; the existing run detail page (live SSE log, results/apply, step log with
+  thumbnails) needed no changes — it was already generic enough to render API runs correctly.
+
+**Two real bugs caught by testing, not reasoning about the code:**
+1. The Postman parser's query-param extraction called `.get("query")` on `request.url` before
+   checking it was actually an object — Postman also allows a plain string URL, which has no
+   `.get`. Would have crashed the whole parse on any collection using the simpler string form,
+   not just skipped that one request's params. Caught by mypy's `union-attr` check, not a
+   test — a reminder that `mypy` catches real bugs here, not just style noise.
+2. Assertion `expected` values never received `{{var}}` substitution — only `path`/`headers`/
+   `query`/`body` did. A chained assertion like "the fetched record's id equals the id the
+   create step extracted" could never pass: it compared the real value against the literal,
+   unsubstituted string `"{{transfer_id}}"`. Invisible in the unit tests (none of them chained
+   an assertion across cases) — only the live integration test running a real create → fetch →
+   assert-the-id-matches flow against `infra/demo-api` caught it. Fixed by substituting
+   `expected` the same way as every other field, plus a new unit test pinning the exact
+   behavior so the fix can't silently regress.
+
+**Deferred, documented, not silently dropped:**
+- Android (Phase 7 per the PRD's own plan).
+- OAuth2 client-credentials auth (PRD lists it as an input option) — only Bearer/API-key-via-
+  header style auth is exercised, via `{{secret_name}}` substitution in headers; a case needing
+  a token-URL exchange first would need to be hand-built as a two-case chain today.
+- `response_time` category assertions (`latency_below_ms`) are implemented in the runner but
+  the generation prompt is told to use them "sparingly, only when asked" — no default coverage.
+- Jira/Azure DevOps bug export (PRD's "API integration v2") — out of scope for this phase, same
+  as Phase 4/5's bug handling.
+
+**Verified**
+- 362 pytest tests (was 326 at the end of Phase 5, +36: spec parsers for all three formats,
+  the request-plan runner including the assertion-substitution regression test, plus live
+  integration tests against a real `infra/demo-api` — spec parsing from its real
+  `/openapi.json`, AI generation with `FakeLLMClient`, and a full create→chain→auth-missing
+  run → apply → evidence flow), 1 skipped, ruff + mypy --strict clean. Frontend
+  typecheck/lint/format/build clean, 10 vitest tests passing.
+- Full browser walkthrough (Playwright, headless, against the real dev DB and a live
+  `infra/demo-api` process): parsed the live app's own OpenAPI spec through the UI (all three
+  real endpoints appeared, correctly labeled) → added a project secret → started an API-target
+  run on a seeded case (AI generation itself untested live — DeepSeek remains out of balance
+  this session, same known state as Phase 4/5 — the generation *code path* is covered by the
+  `FakeLLMClient` integration test instead) → watched it pass → applied → confirmed in the
+  database that the case was updated and that both evidence files (PNG render + text log)
+  were written with the secret correctly masked out of the stored log. Zero console errors or
+  5xx responses.
+
+**Next**
+Phase 7 — Test Lab: Android (APK upload & analysis; emulator run of a sample APK with
+evidence; crash detection; provider interface for remote device farms).

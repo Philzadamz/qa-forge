@@ -37,6 +37,10 @@ class TestCase(IdMixin, TimestampMixin, Base):
     )
     technique: Mapped[list[str]] = mapped_column(JsonType, default=list)
     traces_to: Mapped[list[str]] = mapped_column(JsonType, default=list)
+    # Snapshotted from `default_test_cases.tags` at creation (DEFAULT section only) — used to
+    # opt a default scenario into a built-in deterministic routine (PRD §7.6.1), e.g.
+    # "deterministic:login_valid" (`services/execution/deterministic.py`).
+    tags: Mapped[list[str]] = mapped_column(JsonType, default=list)
     source: Mapped[CaseSource] = mapped_column(SAEnum(CaseSource, native_enum=False, length=20))
     default_case_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("default_test_cases.id"), default=None
@@ -48,4 +52,14 @@ class TestCase(IdMixin, TimestampMixin, Base):
     execution_mode: Mapped[ExecutionMode | None] = mapped_column(
         SAEnum(ExecutionMode, native_enum=False, length=20), default=None
     )
+    last_run_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("test_runs.id"), default=None)
+    # Recorded Playwright action trace from a passing agent-mode run (PRD §7.6.1 "Script
+    # mode") — a list of {action, target, value} steps replayed without the LLM on rerun.
+    automation_script: Mapped[list[dict[str, object]] | None] = mapped_column(
+        JsonType, default=None
+    )
+    # Compiled executable request (PRD §7.6.2): method/path/headers/body/extract/assertions.
+    # Set only on API-target cases — execution is always deterministic (httpx), unlike Web's
+    # agent-vs-script distinction, so there's no separate "script" field for API cases.
+    request_plan: Mapped[dict[str, object] | None] = mapped_column(JsonType, default=None)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)

@@ -105,6 +105,7 @@ class CaseOut(BaseModel):
     is_duplicate: bool
     execution_mode: ExecutionMode | None
     sort_order: int
+    request_plan: dict[str, object] | None = None
 
     model_config = {"from_attributes": True}
 
@@ -135,6 +136,7 @@ class CasePatch(BaseModel):
     traces_to: list[str] | None = None
     included: bool | None = None
     sort_order: int | None = None
+    request_plan: dict[str, object] | None = None
 
 
 class CaseBulkPatch(BaseModel):

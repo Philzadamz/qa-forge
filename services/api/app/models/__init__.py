@@ -10,9 +10,11 @@ from app.models.password_reset_token import PasswordResetToken
 from app.models.project import Project
 from app.models.report import Report
 from app.models.report_defaults import ReportDefaults
+from app.models.secret import Secret
 from app.models.template import Template
 from app.models.test_case import TestCase
 from app.models.test_case_type import DefaultTestCase, TestCaseType
+from app.models.test_run import RunStep, TestRun
 from app.models.test_suite import TestSuite
 from app.models.user import User
 from app.models.user_story import UserStory
@@ -29,9 +31,12 @@ __all__ = [
     "Project",
     "Report",
     "ReportDefaults",
+    "RunStep",
+    "Secret",
     "Template",
     "TestCase",
     "TestCaseType",
+    "TestRun",
     "TestSuite",
     "User",
     "UserStory",

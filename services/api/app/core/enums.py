@@ -122,3 +122,17 @@ class BugStatus(StrEnum):
     FIXED = "fixed"
     RETESTED = "retested"
     CLOSED = "closed"
+
+
+class SecretKind(StrEnum):
+    PASSWORD = "password"  # noqa: S105 - enum member value, not a credential
+    TOKEN = "token"  # noqa: S105
+    API_KEY = "api_key"
+    OAUTH_CLIENT = "oauth_client"
+
+
+class RunStepOutcome(StrEnum):
+    PASS = "pass"  # noqa: S105 - enum member value, not a credential
+    FAIL = "fail"
+    SKIP = "skip"
+    ERROR = "error"

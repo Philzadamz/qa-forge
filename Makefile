@@ -5,7 +5,7 @@ API_DIR := services/api
 WEB_DIR := apps/web
 UV := uv --directory $(API_DIR)
 
-.PHONY: help install dev dev-api dev-web migrate test test-api test-web lint lint-api lint-web \
+.PHONY: help install dev dev-api dev-web demo-target demo-api migrate test test-api test-web lint lint-api lint-web \
         format typecheck up down seed-admin seed-defaults seed-report-defaults
 
 help:
@@ -33,6 +33,12 @@ dev-web:
 
 dev:
 	$(MAKE) -j2 dev-api dev-web
+
+demo-target:
+	$(UV) run python ../../infra/demo-target/app.py
+
+demo-api:
+	$(UV) run python ../../infra/demo-api/app.py
 
 test: test-api test-web
 

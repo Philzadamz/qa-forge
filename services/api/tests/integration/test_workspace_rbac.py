@@ -43,6 +43,20 @@ WORKSPACE_ENDPOINTS: list[tuple[str, str]] = [
     ("GET", f"/api/v1/reports/{ZERO}"),
     ("PUT", f"/api/v1/reports/{ZERO}"),
     ("POST", f"/api/v1/reports/{ZERO}/render"),
+    ("GET", f"/api/v1/projects/{ZERO}/secrets"),
+    ("POST", f"/api/v1/projects/{ZERO}/secrets"),
+    ("DELETE", f"/api/v1/secrets/{ZERO}"),
+    ("GET", f"/api/v1/suites/{ZERO}/runs"),
+    ("POST", "/api/v1/runs"),
+    ("GET", f"/api/v1/runs/{ZERO}"),
+    ("GET", f"/api/v1/runs/{ZERO}/steps"),
+    ("POST", f"/api/v1/runs/{ZERO}/cancel"),
+    ("GET", f"/api/v1/runs/{ZERO}/events"),
+    ("POST", f"/api/v1/runs/{ZERO}/apply"),
+    ("POST", "/api/v1/api-specs/parse"),
+    ("POST", f"/api/v1/suites/{ZERO}/generate-api-cases"),
+    ("GET", f"/api/v1/suites/{ZERO}/export/postman"),
+    ("GET", f"/api/v1/suites/{ZERO}/export/pytest"),
 ]
 
 

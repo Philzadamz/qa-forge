@@ -1,0 +1,176 @@
+from app.core.enums import RunStepOutcome, TestStatus
+from app.services.execution.agent import run_case_with_agent
+from app.services.execution.agent_client import AgentReply, FakeAgentClient, ToolCall
+from tests.unit.fake_browser_tools import FakeBrowserTools
+
+
+def _finish_call(status: str, actual_result: str, confidence: float = 0.9) -> ToolCall:
+    return ToolCall(
+        id="call-finish",
+        name="finish",
+        arguments={"status": status, "actual_result": actual_result, "confidence": confidence},
+    )
+
+
+def test_single_navigate_then_finish_passed() -> None:
+    client = FakeAgentClient(
+        turns=[
+            AgentReply(
+                tool_calls=[ToolCall(id="c1", name="navigate", arguments={"url": "http://x/login"})]
+            ),
+            AgentReply(tool_calls=[_finish_call("Passed", "It worked.")]),
+        ]
+    )
+    tools = FakeBrowserTools()
+    result = run_case_with_agent(
+        client,
+        tools=tools,
+        feature="Login",
+        scenario="Check login",
+        steps=["Go to login"],
+        expected_result="Logs in",
+        target_url="http://x/login",
+        resolve_secret=lambda name: "unused",
+        model="m",
+    )
+    assert result.status == TestStatus.PASSED
+    assert result.actual_result == "It worked."
+    assert [c.name for c in result.raw_calls] == ["navigate"]
+    assert [s.action for s in result.steps] == ["navigate", "finish"]
+    assert result.steps[-1].screenshot is not None
+
+
+def test_fill_with_secret_ref_never_exposes_plaintext() -> None:
+    client = FakeAgentClient(
+        turns=[
+            AgentReply(
+                tool_calls=[
+                    ToolCall(
+                        id="c1",
+                        name="fill",
+                        arguments={"ref": "#password", "secret_ref": "demo_password"},
+                    )
+                ]
+            ),
+            AgentReply(tool_calls=[_finish_call("Passed", "ok")]),
+        ]
+    )
+    tools = FakeBrowserTools()
+    result = run_case_with_agent(
+        client,
+        tools=tools,
+        feature="f",
+        scenario="s",
+        steps=[],
+        expected_result="e",
+        target_url="http://x",
+        resolve_secret=lambda name: "the-real-password-value",
+        model="m",
+    )
+    fill_step = result.steps[0]
+    assert fill_step.input_masked == "[SECRET:demo_password]"
+    assert "the-real-password-value" not in (fill_step.message or "")
+    assert "the-real-password-value" not in str(fill_step.input_masked)
+    # the underlying tool call did receive the resolved value...
+    assert tools.calls[0] == ("fill", {"ref": "#password", "value": "the-real-password-value"})
+    # ...but the model's own recorded tool call (used for script_mode) never saw it.
+    assert result.raw_calls[0].arguments == {"ref": "#password", "secret_ref": "demo_password"}
+
+
+def test_tool_error_marks_step_failed_and_continues() -> None:
+    client = FakeAgentClient(
+        turns=[
+            AgentReply(tool_calls=[ToolCall(id="c1", name="click", arguments={"ref": "#missing"})]),
+            AgentReply(tool_calls=[_finish_call("Failed", "Could not find the button.")]),
+        ]
+    )
+
+    class FailingClickTools(FakeBrowserTools):
+        def click(self, ref: str) -> str:
+            from app.services.execution.tools import ToolError
+
+            raise ToolError(f"No element matching {ref}")
+
+    tools = FailingClickTools()
+    result = run_case_with_agent(
+        client,
+        tools=tools,
+        feature="f",
+        scenario="s",
+        steps=[],
+        expected_result="e",
+        target_url="http://x",
+        resolve_secret=lambda name: "x",
+        model="m",
+    )
+    assert result.steps[0].outcome == RunStepOutcome.FAIL
+    assert result.status == TestStatus.FAILED
+
+
+def test_model_not_calling_a_tool_gets_nudged() -> None:
+    client = FakeAgentClient(
+        turns=[
+            AgentReply(tool_calls=[], text="I'm thinking..."),
+            AgentReply(tool_calls=[_finish_call("Blocked", "Could not proceed.")]),
+        ]
+    )
+    result = run_case_with_agent(
+        client,
+        tools=FakeBrowserTools(),
+        feature="f",
+        scenario="s",
+        steps=[],
+        expected_result="e",
+        target_url="http://x",
+        resolve_secret=lambda name: "x",
+        model="m",
+        max_steps=5,
+    )
+    assert result.status == TestStatus.BLOCKED
+    assert len(client.calls) == 2
+
+
+def test_max_steps_exceeded_without_finish() -> None:
+    client = FakeAgentClient(
+        turns=[
+            AgentReply(tool_calls=[ToolCall(id=f"c{i}", name="snapshot", arguments={})])
+            for i in range(3)
+        ]
+    )
+    result = run_case_with_agent(
+        client,
+        tools=FakeBrowserTools(),
+        feature="f",
+        scenario="s",
+        steps=[],
+        expected_result="e",
+        target_url="http://x",
+        resolve_secret=lambda name: "x",
+        model="m",
+        max_steps=3,
+    )
+    assert result.status == TestStatus.BLOCKED
+    assert result.steps[-1].action == "max_steps_exceeded"
+
+
+def test_on_step_callback_receives_every_event() -> None:
+    client = FakeAgentClient(
+        turns=[
+            AgentReply(tool_calls=[ToolCall(id="c1", name="snapshot", arguments={})]),
+            AgentReply(tool_calls=[_finish_call("Passed", "ok")]),
+        ]
+    )
+    seen = []
+    run_case_with_agent(
+        client,
+        tools=FakeBrowserTools(),
+        feature="f",
+        scenario="s",
+        steps=[],
+        expected_result="e",
+        target_url="http://x",
+        resolve_secret=lambda name: "x",
+        model="m",
+        on_step=seen.append,
+    )
+    assert [e.action for e in seen] == ["snapshot", "finish"]
