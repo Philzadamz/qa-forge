@@ -1,7 +1,8 @@
-"""Fixtures shared by Test Lab (Phase 5/6) tests: live `infra/demo-target` (Web) and
-`infra/demo-api` (API) servers, and a headless Chromium instance — all session-scoped since
-they're expensive to start and safe to share (each test gets its own browser context/page or
-hits its own resource paths, so there's no cross-test state collision)."""
+"""Fixtures shared by Test Lab (Phase 5/6/7) tests: live `infra/demo-target` (Web) and
+`infra/demo-api` (API) servers, a headless Chromium instance, and (if reachable) a real
+Android emulator for the Android runner — all session-scoped since they're expensive to start
+and safe to share (each test gets its own browser context/page or hits its own resource
+paths, so there's no cross-test state collision)."""
 
 import importlib.util
 import socket
@@ -16,6 +17,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[4]
 DEMO_TARGET_DIR = REPO_ROOT / "infra" / "demo-target"
 DEMO_API_DIR = REPO_ROOT / "infra" / "demo-api"
+DEMO_ANDROID_APK = REPO_ROOT / "infra" / "demo-android" / "ApiDemos-debug.apk"
 
 
 def _load_app_module(path: Path, name: str) -> ModuleType:
@@ -98,3 +100,41 @@ def page(_browser: "Browser") -> Iterator["Page"]:
     pg = context.new_page()
     yield pg
     context.close()
+
+
+@pytest.fixture(scope="session")
+def android_apk_path() -> str:
+    if not DEMO_ANDROID_APK.exists():
+        pytest.skip("infra/demo-android/ApiDemos-debug.apk not present")
+    return str(DEMO_ANDROID_APK)
+
+
+@pytest.fixture(scope="session")
+def android_device_udid() -> str:
+    """Skips (doesn't fail) when there's no real Android tooling available — this is live
+    device automation, not something every dev machine or CI runner has. Deliberately a short
+    boot_timeout: if no warm instance of the configured AVD is already attached, we skip
+    rather than spend minutes booting one just for a test run to find out it can't."""
+    import httpx
+
+    from app.core.config import get_settings
+    from app.services.execution.android_provider import DeviceProviderError, LocalEmulatorProvider
+
+    settings = get_settings()
+    try:
+        httpx.get(f"{settings.android_appium_url}/status", timeout=3.0)
+    except httpx.HTTPError:
+        pytest.skip(f"Appium server not reachable at {settings.android_appium_url}")
+
+    provider = LocalEmulatorProvider(
+        avd_name=settings.android_avd_name,
+        appium_server_url=settings.android_appium_url,
+        adb_path=settings.android_adb_path,
+        emulator_path=settings.android_emulator_path,
+        boot_timeout_seconds=5,
+    )
+    try:
+        device = provider.acquire_device()
+    except DeviceProviderError:
+        pytest.skip(f"No warm {settings.android_avd_name!r} emulator instance available")
+    return device.udid

@@ -1,6 +1,7 @@
 """ORM models. Import every model module here so Alembic autogenerate sees it."""
 
 from app.db.base import Base
+from app.models.apk import Apk
 from app.models.audit_log import AuditLog
 from app.models.bug import Bug
 from app.models.evidence import Evidence
@@ -20,6 +21,7 @@ from app.models.user import User
 from app.models.user_story import UserStory
 
 __all__ = [
+    "Apk",
     "AuditLog",
     "Base",
     "Bug",

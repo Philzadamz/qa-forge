@@ -10,7 +10,8 @@ class RunCreate(BaseModel):
     suite_id: uuid.UUID
     case_ids: list[uuid.UUID] = Field(min_length=1)
     target: RunTarget = RunTarget.WEB
-    target_url: str | None = None  # Web: the page URL. API: the base URL.
+    target_url: str | None = None  # Web: the page URL. API: the base URL. Unused for Android.
+    apk_id: uuid.UUID | None = None  # Android only.
     guidance_text: str = ""
     force_agent: bool = False
     self_heal: bool = True

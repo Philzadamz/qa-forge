@@ -205,6 +205,19 @@ export interface Secret {
   created_at: string;
 }
 
+export interface Apk {
+  id: string;
+  project_id: string;
+  file_name: string;
+  file_size: number;
+  package_name: string;
+  launch_activity: string;
+  version_name: string;
+  version_code: string;
+  label: string;
+  created_at: string;
+}
+
 export type RunStatus = "queued" | "running" | "passed" | "failed" | "error" | "cancelled";
 export type RunStepOutcomeValue = "pass" | "fail" | "skip" | "error";
 
@@ -212,7 +225,7 @@ export interface RunCaseResult {
   status: TestStatusValue;
   actual_result: string;
   confidence: number;
-  mode: "agent" | "script" | "deterministic";
+  mode: "agent" | "script" | "deterministic" | "api";
   applied: boolean;
 }
 

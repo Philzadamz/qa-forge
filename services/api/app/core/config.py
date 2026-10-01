@@ -58,6 +58,15 @@ class Settings(BaseSettings):
     ai_temperature: float = 0.2
     ai_max_output_tokens: int = 8192
 
+    # Android runner (PRD §7.6.3). LocalEmulatorProvider targets exactly this AVD — it never
+    # touches an emulator instance it wasn't told about, even if other devices are attached.
+    android_avd_name: str = "QAForgeTest"
+    android_appium_url: str = "http://127.0.0.1:4723"
+    android_adb_path: str = "adb"
+    android_aapt_path: str = "aapt"
+    android_emulator_path: str = "emulator"
+    android_boot_timeout_seconds: float = 180.0
+
 
 @lru_cache
 def get_settings() -> Settings:

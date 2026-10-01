@@ -455,3 +455,101 @@ Prism mock; masked request/response logs as evidence images; Postman/pytest expo
 **Next**
 Phase 7 — Test Lab: Android (APK upload & analysis; emulator run of a sample APK with
 evidence; crash detection; provider interface for remote device farms).
+
+## Phase 7 — Test Lab: Android (2026-10-01)
+
+**Built**
+- `infra/demo-android/ApiDemos-debug.apk`: Appium's own `android-apidemos` fixture, committed
+  as a binary (docs/decisions/008) — real multi-screen native navigation to exercise the
+  runner against, since hand-building an APK from scratch needs a full Gradle/signing
+  toolchain this repo doesn't have.
+- APK upload & analysis (`app/models/apk.py`, `apk_analysis.py`, `POST /projects/{id}/apks`):
+  shells out to `aapt dump badging` to extract package name, launch activity, version — shown
+  to the user immediately (the project page's new Android APKs panel) rather than only at run
+  time, per PRD's "shown for confirmation."
+- `AndroidDeviceProvider` (PRD's explicit interface ask): `LocalEmulatorProvider` (v1,
+  implemented and live-verified) identifies a usable emulator by asking each attached device
+  which AVD it's running, never just grabbing the first one off `adb devices` — boots a fresh
+  instance of the configured AVD if none is already warm. `RemoteAppiumProvider` (cloud device
+  farm) stays an explicit `NotImplementedError` stub — no farm account to build and verify
+  against, and docs/decisions/005 already covered why an unverified implementation is worse
+  than a clear stub.
+- `AndroidTools` (`android_tools.py`, PRD §7.6.3's tool set — `snapshot`, `tap`, `type`,
+  `swipe`, `scroll_to`, `back`, `home`, `launch_app`, `background_app`, `rotate`, `wait_for`,
+  `assert_visible`) over the real Appium Python client / UiAutomator2, addressing elements by
+  a ref assigned to interactive nodes in the UiAutomator XML dump, tapped at the bounds
+  center — the same "assign a ref to what the model can act on" shape as Web's `data-qa-ref`,
+  adapted since UiAutomator XML has no selector equivalent.
+- `android_agent.py`: a second, independent agent loop (not a refactor of Web's `agent.py`
+  into a shared engine) — the tool sets differ enough in their arguments that sharing would
+  need as much per-target parameterization as it'd save, and this keeps Phase 5's
+  already-verified Web loop untouched. `CaseStepEvent`/`CaseRunResult` (genuinely generic) are
+  reused as-is.
+- `android_execution_runner.py`: installs the APK once per run (not per case — PRD's
+  "fresh app relaunch per case" is satisfied by force-stop + Appium relaunch, which is cheap;
+  reinstalling a multi-MB APK before every case isn't), force-stops + clears logcat before
+  each case, runs the agent loop, then checks logcat for `FATAL EXCEPTION`/`ANR in` referencing
+  the app's package and **auto-fails the case regardless of the agent's own verdict** — PRD
+  §7.6.3's explicit requirement, verified for real by deliberately crashing the app
+  mid-case (`adb shell am crash`) against a fake agent that confidently reports "Passed."
+  Uninstalls the APK when the run ends either way.
+- Frontend: an Android APKs panel on the project page (upload, see analyzed metadata, delete),
+  and a third Target option (Android) on the suite's Test Lab panel with an APK picker in
+  place of the target-URL field — the existing run detail page needed no changes.
+
+**Three real bugs caught by testing against a real emulator, not reasoning about the code:**
+1. `BrowserTools`-style `_locator` reasoning doesn't apply to Android at all, but an analogous
+   mistake did: the first version of the live test fixture reinstalled the APK and opened a
+   brand-new Appium session before *every single test function*. In practice this was flaky —
+   one run landed on the home launcher instead of the app, another timed out talking to the
+   device entirely. Fixed by installing once per test module and using force-stop + relaunch
+   between tests, which is exactly what the real runner does between cases — the fixture was
+   wrong, not just slow, and fixing it to match production behavior made both reliable.
+2. The crash-detection regex matched a logcat line correctly, but the check required the
+   crashing app's **package name on the same line** as `FATAL EXCEPTION` — real crash logs
+   never put them on the same line (`FATAL EXCEPTION: main` is one line; `Process:
+   <package>, PID: <n>` is the next). The very scenario this feature exists for — PRD's
+   "auto-fail the case on crash" — silently failed to fire, confirmed only by deliberately
+   crashing the real app via `adb shell am crash` and watching the case come back "Passed"
+   from the agent's own (wrong) self-report. Fixed by matching the crash marker and then
+   checking a short window of following lines for the package name, verified against the
+   actual captured logcat output before re-running the test.
+3. (Caught by mypy, not a test, but worth noting alongside the others) the Postman-collection
+   parser's query-param extraction in Phase 6 had an identical "trust the shape before
+   checking it" bug — see that phase's own entry — same root cause as #1 above: code that
+   looks fine until it's handed a real malformed/unexpected case.
+
+**Deferred, documented, not silently dropped:**
+- `.aab` → universal-APK conversion via bundletool — only `.apk` uploads are accepted.
+- Manual OTP/2FA pause (`POST /runs/{id}/input`) — same gap as Web/API; `background_app` is
+  the only session-timeout-adjacent tool so far.
+- Device profile picker — fixed to whatever `ANDROID_AVD_NAME` is configured to; PRD's
+  "Pixel-class, API 33/34 default" is a setup-time choice, not a per-run one, in this phase.
+- Permissions auto-grant is always on (`autoGrantPermissions=True`) rather than a per-run
+  toggle.
+- Script mode (record a passing agent run, replay without the LLM) — built for Web
+  (docs/progress.md Phase 5), not extended to Android. PRD doesn't ask for it explicitly for
+  Android and the agent loop is cheap enough per-case here that it wasn't an obvious need yet.
+
+**Verified**
+- 391 pytest tests (was 362 at the end of Phase 6, +29: APK analysis, the device-provider's
+  isolation guarantee with mocked `adb`, the Android agent loop with fake tools, plus live
+  integration tests against a real emulator — `AndroidTools` driving the real ApiDemos app,
+  and a full run → apply → evidence flow including the deliberate-crash auto-fail test), 1
+  skipped, ruff + mypy --strict clean. Frontend typecheck/lint/format/build clean, 10 vitest
+  tests passing.
+- Full browser walkthrough (Playwright, headless, against the real dev DB, a real emulator,
+  and a real Appium server): uploaded the APK through the UI and watched it get analyzed
+  live → created a suite → selected the Android target and the uploaded APK → started a run →
+  watched the live view → reached Results → Applied. The run itself ended Blocked (DeepSeek
+  remains out of balance this session, the same known, unrelated state as every prior phase)
+  — but the failure path was exactly as designed: a clear per-case error message, a populated
+  step log, and a suite update the user could still review and apply. Zero console errors or
+  5xx responses.
+- Device isolation verified on the actual development machine, which had a second, unrelated
+  emulator already running: `LocalEmulatorProvider` never touched it, confirmed both by the
+  mocked unit tests and by directly inspecting `adb devices` throughout this phase's work.
+
+**Next**
+Phase 8 — Hardening (security checklist per PRD §12, complete audit log, usage dashboard,
+retention jobs, measured performance targets, user & admin guide in `docs/`).

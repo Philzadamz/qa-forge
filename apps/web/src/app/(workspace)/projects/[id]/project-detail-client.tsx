@@ -16,6 +16,7 @@ import { ApiError, apiFetch } from "@/lib/api";
 import { pasteStorySchema, type PasteStoryInput } from "@/lib/schemas/workspace";
 import type { Project, Story, Suite } from "@/lib/types/workspace";
 
+import { ApkPanel } from "./apk-panel";
 import { SecretsPanel } from "./secrets-panel";
 
 export function ProjectDetailClient({ projectId }: { projectId: string }) {
@@ -172,6 +173,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
         </CardContent>
       </Card>
 
+      <ApkPanel projectId={projectId} />
       <SecretsPanel projectId={projectId} />
     </div>
   );

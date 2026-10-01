@@ -1,4 +1,4 @@
-"""Test Lab runs (PRD §7.6, §10). Web and API targets — Android is a later phase."""
+"""Test Lab runs (PRD §7.6, §10). Web, API, and Android targets."""
 
 import copy
 import json
@@ -14,12 +14,14 @@ from app.core.audit import record as audit_record
 from app.core.enums import ExecutionMode, RunStatus, RunTarget, TestStatus
 from app.core.rbac import require_project_access, require_user
 from app.db.session import get_db
+from app.models.apk import Apk
 from app.models.project import Project
 from app.models.test_case import TestCase
 from app.models.test_run import RunStep, TestRun
 from app.models.test_suite import TestSuite
 from app.models.user import User
 from app.schemas.runs import RunApplyIn, RunCreate, RunOut, RunStepOut
+from app.services.execution.android_execution_runner import run_android_execution_job
 from app.services.execution.api_execution_runner import run_api_execution_job
 from app.services.execution.execution_runner import run_execution_job
 from app.services.execution.run_events import RunEvent, request_cancel, subscribe, unsubscribe
@@ -68,11 +70,6 @@ def create_run(
     db: Session = Depends(get_db),
     user: User = Depends(require_user),
 ) -> TestRun:
-    if payload.target not in (RunTarget.WEB, RunTarget.API):
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "Only the Web and API targets are available in this release",
-        )
     suite, project = _get_suite_or_404(db, payload.suite_id, user)
     cases = (
         db.query(TestCase)
@@ -86,30 +83,41 @@ def create_run(
             status.HTTP_400_BAD_REQUEST,
             f"Case(s) not found in this suite: {sorted(str(m) for m in missing)}",
         )
-    target_url = payload.target_url or project.default_test_url
-    if not target_url:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "No target URL given and the project has no default test URL configured",
-        )
-    if payload.target == RunTarget.API:
-        missing_plan = [c.id for c in cases if not c.request_plan]
-        if missing_plan:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                f"Case(s) have no compiled request plan: {sorted(str(m) for m in missing_plan)}",
-            )
 
     config_json: dict[str, object] = {
-        "target_url": target_url,
-        "base_url": target_url,
         "force_agent": payload.force_agent,
         "self_heal": payload.self_heal,
     }
-    if payload.default_headers:
-        config_json["default_headers"] = payload.default_headers
-    if payload.env_vars:
-        config_json["env_vars"] = payload.env_vars
+
+    if payload.target == RunTarget.ANDROID:
+        if payload.apk_id is None:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, "apk_id is required for an Android run"
+            )
+        apk = db.get(Apk, payload.apk_id)
+        if apk is None or apk.project_id != project.id:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "APK not found in this project")
+        config_json["apk_id"] = str(apk.id)
+    else:
+        target_url = payload.target_url or project.default_test_url
+        if not target_url:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "No target URL given and the project has no default test URL configured",
+            )
+        config_json["target_url"] = target_url
+        config_json["base_url"] = target_url
+        if payload.target == RunTarget.API:
+            missing_plan = [c.id for c in cases if not c.request_plan]
+            if missing_plan:
+                ids = sorted(str(m) for m in missing_plan)
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST, f"Case(s) have no compiled request plan: {ids}"
+                )
+        if payload.default_headers:
+            config_json["default_headers"] = payload.default_headers
+        if payload.env_vars:
+            config_json["env_vars"] = payload.env_vars
 
     run = TestRun(
         suite_id=suite.id,
@@ -133,7 +141,10 @@ def create_run(
     db.commit()
     db.refresh(run)
 
-    target_job = run_api_execution_job if payload.target == RunTarget.API else run_execution_job
+    target_job = {
+        RunTarget.API: run_api_execution_job,
+        RunTarget.ANDROID: run_android_execution_job,
+    }.get(payload.target, run_execution_job)
     thread = threading.Thread(target=target_job, args=(run.id,), daemon=True)
     thread.start()
 

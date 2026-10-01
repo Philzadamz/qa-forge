@@ -11,9 +11,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { ApiError, apiFetch } from "@/lib/api";
-import type { Project, Run, RunStatus } from "@/lib/types/workspace";
+import type { Apk, Project, Run, RunStatus } from "@/lib/types/workspace";
 
 import { ApiSpecPanel } from "./api-spec-panel";
+
+type Target = "web" | "api" | "android";
 
 function describeError(err: unknown, fallback: string): string {
   if (err instanceof ApiError) return err.problem.detail ?? err.message;
@@ -42,8 +44,9 @@ export function TestLabPanel({
 }) {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const [target, setTarget] = useState<"web" | "api">("web");
+  const [target, setTarget] = useState<Target>("web");
   const [targetUrl, setTargetUrl] = useState("");
+  const [apkId, setApkId] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const { data: project } = useQuery({
@@ -54,8 +57,14 @@ export function TestLabPanel({
     queryKey: ["suites", suiteId, "runs"],
     queryFn: () => apiFetch<Run[]>(`/suites/${suiteId}/runs`),
   });
+  const { data: apks } = useQuery({
+    queryKey: ["projects", projectId, "apks"],
+    queryFn: () => apiFetch<Apk[]>(`/projects/${projectId}/apks`),
+    enabled: target === "android",
+  });
 
   const effectiveUrl = targetUrl || project?.default_test_url || "";
+  const canStart = selectedCaseIds.length > 0 && (target === "android" ? !!apkId : !!effectiveUrl);
 
   const startRun = useMutation({
     mutationFn: () =>
@@ -65,7 +74,8 @@ export function TestLabPanel({
           suite_id: suiteId,
           case_ids: selectedCaseIds,
           target,
-          target_url: effectiveUrl || undefined,
+          target_url: target === "android" ? undefined : effectiveUrl || undefined,
+          apk_id: target === "android" ? apkId : undefined,
         }),
       }),
     onSuccess: (run) => {
@@ -87,34 +97,59 @@ export function TestLabPanel({
           <Select
             id="target"
             value={target}
-            onChange={(e) => setTarget(e.target.value as "web" | "api")}
+            onChange={(e) => setTarget(e.target.value as Target)}
             className="w-40"
           >
             <option value="web">Web</option>
             <option value="api">API</option>
+            <option value="android">Android</option>
           </Select>
         </div>
 
         {target === "api" && <ApiSpecPanel suiteId={suiteId} />}
 
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="target-url">{target === "api" ? "Base URL" : "Target URL"}</Label>
-          <Input
-            id="target-url"
-            placeholder={project?.default_test_url ?? "https://…"}
-            value={targetUrl}
-            onChange={(e) => setTargetUrl(e.target.value)}
-          />
-          <p className="text-muted-foreground text-xs">
-            {selectedCaseIds.length === 0
-              ? "Check “Run in Test Lab” on one or more cases above, then start a run."
-              : `${selectedCaseIds.length} case(s) selected to run.`}
-          </p>
-        </div>
+        {target === "android" ? (
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="apk-select">APK</Label>
+            <Select id="apk-select" value={apkId} onChange={(e) => setApkId(e.target.value)}>
+              <option value="">Select an uploaded APK…</option>
+              {apks?.map((apk) => (
+                <option key={apk.id} value={apk.id}>
+                  {apk.label || apk.file_name} (v{apk.version_name})
+                </option>
+              ))}
+            </Select>
+            {apks?.length === 0 && (
+              <p className="text-muted-foreground text-xs">
+                No APKs uploaded yet — upload one on the project page first.
+              </p>
+            )}
+            <p className="text-muted-foreground text-xs">
+              {selectedCaseIds.length === 0
+                ? "Check “Run in Test Lab” on one or more cases above, then start a run."
+                : `${selectedCaseIds.length} case(s) selected to run.`}
+            </p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="target-url">{target === "api" ? "Base URL" : "Target URL"}</Label>
+            <Input
+              id="target-url"
+              placeholder={project?.default_test_url ?? "https://…"}
+              value={targetUrl}
+              onChange={(e) => setTargetUrl(e.target.value)}
+            />
+            <p className="text-muted-foreground text-xs">
+              {selectedCaseIds.length === 0
+                ? "Check “Run in Test Lab” on one or more cases above, then start a run."
+                : `${selectedCaseIds.length} case(s) selected to run.`}
+            </p>
+          </div>
+        )}
         {error && <p className="text-destructive text-sm">{error}</p>}
         <Button
           onClick={() => startRun.mutate()}
-          disabled={selectedCaseIds.length === 0 || !effectiveUrl || startRun.isPending}
+          disabled={!canStart || startRun.isPending}
           className="self-start"
         >
           {startRun.isPending ? "Starting…" : "Start Test Lab Run"}

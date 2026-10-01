@@ -32,7 +32,29 @@ def _create_suite(client: TestClient, project: dict, type_obj: dict) -> dict:
     ).json()
 
 
-def test_create_run_rejects_android_target(admin_client: TestClient) -> None:
+def test_create_run_rejects_an_unrecognized_target(admin_client: TestClient) -> None:
+    project = _create_project(admin_client)
+    type_obj = _create_type(admin_client)
+    suite = _create_suite(admin_client, project, type_obj)
+    case = admin_client.post(
+        f"/api/v1/suites/{suite['id']}/cases",
+        json={
+            "section": "functional",
+            "feature": "f",
+            "scenario": "s",
+            "steps": ["x"],
+            "expected_result": "e",
+        },
+    ).json()
+
+    resp = admin_client.post(
+        "/api/v1/runs",
+        json={"suite_id": suite["id"], "case_ids": [case["id"]], "target": "ios"},
+    )
+    assert resp.status_code == 422  # not a valid RunTarget enum value
+
+
+def test_create_android_run_requires_an_apk_id(admin_client: TestClient) -> None:
     project = _create_project(admin_client)
     type_obj = _create_type(admin_client)
     suite = _create_suite(admin_client, project, type_obj)
@@ -52,7 +74,7 @@ def test_create_run_rejects_android_target(admin_client: TestClient) -> None:
         json={"suite_id": suite["id"], "case_ids": [case["id"]], "target": "android"},
     )
     assert resp.status_code == 400
-    assert "Web" in resp.text
+    assert "apk_id" in resp.text
 
 
 def test_create_api_run_rejects_case_without_request_plan(admin_client: TestClient) -> None:

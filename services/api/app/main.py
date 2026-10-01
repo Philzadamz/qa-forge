@@ -8,6 +8,7 @@ from app.core.errors import install_error_handlers
 from app.core.logging import REQUEST_ID_HEADER, RequestIdMiddleware, configure_logging
 from app.routers import (
     api_lab,
+    apks,
     auth,
     bugs,
     cases,
@@ -59,6 +60,7 @@ def create_app() -> FastAPI:
     app.include_router(secrets.router, prefix=settings.api_prefix)
     app.include_router(runs.router, prefix=settings.api_prefix)
     app.include_router(api_lab.router, prefix=settings.api_prefix)
+    app.include_router(apks.router, prefix=settings.api_prefix)
     return app
 
 
