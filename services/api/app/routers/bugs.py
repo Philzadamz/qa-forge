@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.core.audit import record as audit_record
+from app.core.features import require_feature
 from app.core.rbac import require_project_access, require_user
 from app.db.session import get_db
 from app.models.bug import Bug
@@ -15,7 +16,10 @@ from app.models.test_suite import TestSuite
 from app.models.user import User
 from app.schemas.execution import BugIn, BugOut, BugPatch
 
-router = APIRouter(tags=["bugs"])
+router = APIRouter(
+    tags=["bugs"],
+    dependencies=[Depends(require_feature("bug_tracking"))],
+)
 
 
 def _get_project_or_404(db: Session, project_id: uuid.UUID, user: User) -> Project:

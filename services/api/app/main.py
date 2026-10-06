@@ -13,6 +13,7 @@ from app.routers import (
     bugs,
     cases,
     dashboard,
+    features,
     health,
     projects,
     reports,
@@ -51,6 +52,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router, prefix=settings.api_prefix)
     app.include_router(auth.router, prefix=settings.api_prefix)
     app.include_router(admin_router, prefix=settings.api_prefix)
+    app.include_router(features.public_router, prefix=settings.api_prefix)
     app.include_router(types.router, prefix=settings.api_prefix)
     app.include_router(projects.router, prefix=settings.api_prefix)
     app.include_router(stories.router, prefix=settings.api_prefix)

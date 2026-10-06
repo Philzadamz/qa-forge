@@ -5,6 +5,7 @@ const NAV_ITEMS = [
   { href: "/types", label: "Test Case Types" },
   { href: "/users", label: "Users" },
   { href: "/audit-log", label: "Audit Log" },
+  { href: "/settings", label: "Settings" },
 ];
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {

@@ -69,6 +69,8 @@ export function SignatureField({
   if (signatureKey) {
     return (
       <div className="flex flex-col gap-2">
+        {/* Authenticated image from the API; next/image can't fetch it through the session. */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={`${API_PREFIX}${base}?k=${encodeURIComponent(signatureKey)}`}
           alt={`Signature for approval ${index + 1}`}

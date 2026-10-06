@@ -6,15 +6,14 @@ import uuid
 from collections import defaultdict
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.audit import record as audit_record
 from app.core.config import get_settings
-from app.core.enums import CaseSection, CaseSource, EvidenceKind, TemplateKind, TemplateStatus
+from app.core.enums import CaseSection, CaseSource, TemplateKind, TemplateStatus
 from app.core.rbac import require_project_access, require_user
-from app.core.uploads import sniff_image
 from app.db.session import get_db
 from app.models.evidence import Evidence
 from app.models.project import Project
@@ -30,8 +29,6 @@ from app.services.storage import build_storage
 from app.services.suites.numbering import renumber_suite_cases
 
 router = APIRouter(tags=["cases"])
-
-MAX_EVIDENCE_BYTES = 10 * 1024 * 1024
 
 
 def _get_project_or_404(db: Session, project_id: uuid.UUID, user: User) -> Project:
@@ -209,60 +206,10 @@ def list_evidence(
     _get_case_or_404(db, case_id, user)
     return list(
         db.query(Evidence)
-        .filter(Evidence.test_case_id == case_id)
+        .filter(Evidence.test_case_id == case_id, Evidence.run_id.is_not(None))
         .order_by(Evidence.sort_order)
         .all()
     )
-
-
-@router.post(
-    "/cases/{case_id}/evidence", response_model=EvidenceOut, status_code=status.HTTP_201_CREATED
-)
-async def upload_evidence(
-    case_id: uuid.UUID,
-    request: Request,
-    file: UploadFile,
-    db: Session = Depends(get_db),
-    user: User = Depends(require_user),
-) -> Evidence:
-    case, _, _ = _get_case_or_404(db, case_id, user)
-    raw = await file.read()
-    if len(raw) > MAX_EVIDENCE_BYTES:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Evidence file is too large (max 10 MB)")
-    sniffed = sniff_image(raw)
-    if sniffed is None:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "Unsupported evidence file. Upload a PNG, JPEG, GIF, or WebP image.",
-        )
-    _, extension = sniffed
-
-    max_sort = db.query(Evidence).filter(Evidence.test_case_id == case_id).count()
-    evidence_id = uuid.uuid4()
-    key = f"evidence/{case.suite_id}/{case_id}/{evidence_id}.{extension}"
-    build_storage(get_settings()).put(key, raw)
-
-    obj = Evidence(
-        id=evidence_id,
-        test_case_id=case_id,
-        kind=EvidenceKind.SCREENSHOT,
-        file_key=key,
-        caption=file.filename,
-        sort_order=max_sort,
-    )
-    db.add(obj)
-    db.flush()
-    audit_record(
-        db,
-        actor_id=user.id,
-        action="upload",
-        entity="evidence",
-        entity_id=str(obj.id),
-        request=request,
-    )
-    db.commit()
-    db.refresh(obj)
-    return obj
 
 
 _EXTENSION_CONTENT_TYPES = {
@@ -288,30 +235,6 @@ def get_evidence_file(
     return StreamingResponse(iter([raw]), media_type=content_type)
 
 
-@router.delete("/evidence/{evidence_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_evidence(
-    evidence_id: uuid.UUID,
-    request: Request,
-    db: Session = Depends(get_db),
-    user: User = Depends(require_user),
-) -> None:
-    obj = db.get(Evidence, evidence_id)
-    if obj is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Evidence not found")
-    _get_case_or_404(db, obj.test_case_id, user)
-    build_storage(get_settings()).delete(obj.file_key)
-    audit_record(
-        db,
-        actor_id=user.id,
-        action="delete",
-        entity="evidence",
-        entity_id=str(evidence_id),
-        request=request,
-    )
-    db.delete(obj)
-    db.commit()
-
-
 @router.post("/suites/{suite_id}/export/xlsx")
 def export_xlsx(
     suite_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(require_user)
@@ -329,7 +252,7 @@ def export_xlsx(
     if cases:
         for e in (
             db.query(Evidence)
-            .filter(Evidence.test_case_id.in_([c.id for c in cases]))
+            .filter(Evidence.test_case_id.in_([c.id for c in cases]), Evidence.run_id.is_not(None))
             .order_by(Evidence.sort_order)
             .all()
         ):

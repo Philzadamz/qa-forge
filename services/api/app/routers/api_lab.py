@@ -11,6 +11,7 @@ from app.core import usage
 from app.core.audit import record as audit_record
 from app.core.config import get_settings
 from app.core.enums import CaseSection, CaseSource, Priority, TestStatus
+from app.core.features import require_feature
 from app.core.rbac import require_project_access, require_user
 from app.core.ssrf import UnsafeUrlError, assert_public_http_url
 from app.db.session import get_db
@@ -27,7 +28,10 @@ from app.services.docengine.api_export import build_postman_collection, build_py
 from app.services.execution.api_spec import SpecParseError, parse_curl, parse_openapi, parse_postman
 from app.services.suites.numbering import renumber_suite_cases
 
-router = APIRouter(tags=["api-lab"])
+router = APIRouter(
+    tags=["api-lab"],
+    dependencies=[Depends(require_feature("api_spec_import"))],
+)
 
 
 def _get_suite_or_404(db: Session, suite_id: uuid.UUID, user: User) -> tuple[TestSuite, Project]:

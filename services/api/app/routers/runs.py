@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.core.audit import record as audit_record
 from app.core.enums import ExecutionMode, RunStatus, RunTarget, TestStatus
+from app.core.features import ensure_feature
 from app.core.rbac import require_project_access, require_user
 from app.db.session import get_db
 from app.models.apk import Apk
@@ -70,6 +71,7 @@ def create_run(
     db: Session = Depends(get_db),
     user: User = Depends(require_user),
 ) -> TestRun:
+    ensure_feature(db, f"test_lab_{payload.target.value}")
     suite, project = _get_suite_or_404(db, payload.suite_id, user)
     cases = (
         db.query(TestCase)

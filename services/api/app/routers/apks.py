@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.audit import record as audit_record
 from app.core.config import get_settings
+from app.core.features import require_feature
 from app.core.rbac import require_project_access, require_user
 from app.db.session import get_db
 from app.models.apk import Apk
@@ -18,7 +19,10 @@ from app.schemas.apks import ApkOut
 from app.services.execution.apk_analysis import ApkAnalysisError, analyze_apk
 from app.services.storage import build_storage
 
-router = APIRouter(tags=["apks"])
+router = APIRouter(
+    tags=["apks"],
+    dependencies=[Depends(require_feature("test_lab_android"))],
+)
 
 MAX_APK_BYTES = 200 * 1024 * 1024
 

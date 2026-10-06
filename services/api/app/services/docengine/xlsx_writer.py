@@ -29,6 +29,8 @@ FUNCTIONAL_BANNER = "FUNCTIONAL SCENARIOS"
 TABLE_HEADER_ROW = 11
 FIRST_DATA_ROW = 12
 EVIDENCE_IMAGE_MAX_WIDTH_PX = 900
+DEFAULT_EVIDENCE_TAB = "Default test evidence"
+FUNCTIONAL_EVIDENCE_TAB = "Functional test evidence"
 
 HEADER_CELLS = {
     "project_name_line": "B1",
@@ -78,31 +80,25 @@ def _row_height_for(case: ExportCase) -> float:
 
 
 class _EvidenceSheets:
-    """Lazily creates one evidence sheet per evidence group and tracks the write cursor."""
+    """The two evidence tabs that follow the main sheet, filled only with Test Lab screenshots."""
 
     def __init__(self, wb: Workbook) -> None:
         self._wb = wb
-        self._sheet_names: dict[str, str] = {}
+        self._tabs: dict[str, str] = {}
         self._next_row: dict[str, int] = {}
 
-    def sheet_for(self, evidence_group: str) -> Worksheet:
-        if evidence_group not in self._sheet_names:
-            name = _sanitize_sheet_name(evidence_group, set(self._wb.sheetnames))
-            self._sheet_names[evidence_group] = name
-            self._next_row[name] = 1
-            self._wb.create_sheet(name)
-        return self._wb[self._sheet_names[evidence_group]]
+    def open_tab(self, key: str, tab_name: str) -> None:
+        name = _sanitize_sheet_name(tab_name, set(self._wb.sheetnames))
+        self._tabs[key] = name
+        self._next_row[name] = 1
+        self._wb.create_sheet(name)
 
-    def sheet_name_for(self, evidence_group: str) -> str:
-        self.sheet_for(evidence_group)  # ensure created
-        return self._sheet_names[evidence_group]
-
-    def place_evidence(self, case: ExportCase) -> str | None:
-        """Write the case's evidence images and return the hyperlink display text, if any."""
+    def place_evidence(self, key: str, case: ExportCase) -> str | None:
+        """Write the case's screenshots under its tab and return the hyperlink text, if any."""
         if not case.evidence:
             return None
-        sheet = self.sheet_for(case.evidence_group)
-        name = self._sheet_names[case.evidence_group]
+        name = self._tabs[key]
+        sheet = self._wb[name]
         anchor_row = self._next_row[name]
 
         # PRD §3.1 specifies an en dash in the caption format, not a hyphen.
@@ -213,9 +209,11 @@ def write_test_cases_xlsx(template_path: Path, data: SuiteExportData, output_pat
     ws[ENDPOINT_CELL] = data.header.endpoint_url
 
     evidence_sheets = _EvidenceSheets(wb)
+    evidence_sheets.open_tab("default", DEFAULT_EVIDENCE_TAB)
+    evidence_sheets.open_tab("functional", FUNCTIONAL_EVIDENCE_TAB)
     row = FIRST_DATA_ROW
 
-    def write_section(banner_text: str, cases: list[ExportCase]) -> tuple[int, int]:
+    def write_section(banner_text: str, tab_key: str, cases: list[ExportCase]) -> tuple[int, int]:
         nonlocal row
         ws.cell(row=row, column=1, value=banner_text)
         banner_style.apply(ws.cell(row=row, column=1))
@@ -223,7 +221,7 @@ def write_test_cases_xlsx(template_path: Path, data: SuiteExportData, output_pat
         row += 1
         section_start = row
         for case in cases:
-            link = evidence_sheets.place_evidence(case)
+            link = evidence_sheets.place_evidence(tab_key, case)
             _write_case_row(
                 ws,
                 row,
@@ -238,8 +236,10 @@ def write_test_cases_xlsx(template_path: Path, data: SuiteExportData, output_pat
         _merge_feature_column(ws, section_start, section_end)
         return section_start, section_end
 
-    default_start, default_end = write_section(DEFAULT_BANNER, data.default_cases)
-    functional_start, functional_end = write_section(FUNCTIONAL_BANNER, data.functional_cases)
+    default_start, default_end = write_section(DEFAULT_BANNER, "default", data.default_cases)
+    functional_start, functional_end = write_section(
+        FUNCTIONAL_BANNER, "functional", data.functional_cases
+    )
 
     first_row = default_start if data.default_cases else functional_start
     last_row = functional_end if data.functional_cases else default_end

@@ -1,11 +1,24 @@
 import io
+import uuid
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 from PIL import Image
+from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
+from app.core.enums import RunTarget
+from app.models.evidence import Evidence
+from app.models.test_run import TestRun
+from app.services.storage import build_storage
 from tests.golden.fixtures_paths import needs_xlsx_template
+
+
+def _png_bytes() -> bytes:
+    buf = io.BytesIO()
+    Image.new("RGB", (100, 50), color=(1, 2, 3)).save(buf, format="PNG")
+    return buf.getvalue()
 
 
 def _create_project(client: TestClient) -> dict:
@@ -14,8 +27,11 @@ def _create_project(client: TestClient) -> dict:
     ).json()
 
 
-def _create_type_with_one_default(admin_client: TestClient) -> dict:
-    type_obj = admin_client.post("/api/v1/admin/types", json={"name": "Web Application"}).json()
+def _suite_with_default_case(admin_client: TestClient) -> tuple[dict, dict]:
+    project = _create_project(admin_client)
+    type_obj = admin_client.post(
+        "/api/v1/admin/types", json={"name": f"Evidence type {uuid.uuid4()}"}
+    ).json()
     admin_client.post(
         f"/api/v1/admin/types/{type_obj['id']}/defaults",
         json={
@@ -25,18 +41,6 @@ def _create_type_with_one_default(admin_client: TestClient) -> dict:
             "expected_result": "Logged in",
         },
     )
-    return type_obj
-
-
-def _png_bytes() -> bytes:
-    buf = io.BytesIO()
-    Image.new("RGB", (100, 50), color=(1, 2, 3)).save(buf, format="PNG")
-    return buf.getvalue()
-
-
-def test_upload_and_list_evidence(admin_client: TestClient) -> None:
-    project = _create_project(admin_client)
-    type_obj = _create_type_with_one_default(admin_client)
     suite = admin_client.post(
         "/api/v1/suites",
         json={
@@ -47,153 +51,95 @@ def test_upload_and_list_evidence(admin_client: TestClient) -> None:
         },
     ).json()
     case = admin_client.get(f"/api/v1/suites/{suite['id']}/cases").json()[0]
+    return suite, case
 
+
+def _seed_test_lab_screenshot(db: Session, case: dict, suite: dict, caption: str) -> Evidence:
+    run = TestRun(
+        project_id=uuid.UUID(suite["project_id"]),
+        suite_id=uuid.UUID(suite["id"]),
+        target=RunTarget.WEB,
+        selected_case_ids=[case["id"]],
+    )
+    db.add(run)
+    db.flush()
+    key = f"evidence/{suite['id']}/{case['id']}/{uuid.uuid4()}.png"
+    build_storage(get_settings()).put(key, _png_bytes())
+    row = Evidence(test_case_id=uuid.UUID(case["id"]), run_id=run.id, file_key=key, caption=caption)
+    db.add(row)
+    db.commit()
+    return row
+
+
+def test_manual_evidence_upload_is_removed(admin_client: TestClient) -> None:
+    _, case = _suite_with_default_case(admin_client)
     resp = admin_client.post(
         f"/api/v1/cases/{case['id']}/evidence",
         files={"file": ("screenshot.png", _png_bytes(), "image/png")},
     )
-    assert resp.status_code == 201, resp.text
-    evidence = resp.json()
-    assert evidence["caption"] == "screenshot.png"
-
-    listing = admin_client.get(f"/api/v1/cases/{case['id']}/evidence").json()
-    assert len(listing) == 1
+    assert resp.status_code == 405
 
 
-def test_upload_evidence_rejects_bad_content_type(admin_client: TestClient) -> None:
-    project = _create_project(admin_client)
-    type_obj = _create_type_with_one_default(admin_client)
-    suite = admin_client.post(
-        "/api/v1/suites",
-        json={
-            "project_id": project["id"],
-            "type_id": type_obj["id"],
-            "name": "S",
-            "header": {"project_name_line": "X"},
-        },
-    ).json()
-    case = admin_client.get(f"/api/v1/suites/{suite['id']}/cases").json()[0]
-
-    resp = admin_client.post(
-        f"/api/v1/cases/{case['id']}/evidence",
-        files={"file": ("payload.exe", b"not an image", "application/octet-stream")},
+def test_listing_shows_only_test_lab_screenshots(
+    admin_client: TestClient, db_session: Session
+) -> None:
+    suite, case = _suite_with_default_case(admin_client)
+    _seed_test_lab_screenshot(db_session, case, suite, "Step 1")
+    db_session.add(
+        Evidence(
+            test_case_id=uuid.UUID(case["id"]),
+            run_id=None,
+            file_key="evidence/legacy.png",
+            caption="legacy manual upload",
+        )
     )
-    assert resp.status_code == 400
-
-
-def test_get_evidence_file_returns_the_image_bytes(admin_client: TestClient) -> None:
-    project = _create_project(admin_client)
-    type_obj = _create_type_with_one_default(admin_client)
-    suite = admin_client.post(
-        "/api/v1/suites",
-        json={
-            "project_id": project["id"],
-            "type_id": type_obj["id"],
-            "name": "S",
-            "header": {"project_name_line": "X"},
-        },
-    ).json()
-    case = admin_client.get(f"/api/v1/suites/{suite['id']}/cases").json()[0]
-    png = _png_bytes()
-    evidence = admin_client.post(
-        f"/api/v1/cases/{case['id']}/evidence",
-        files={"file": ("a.png", png, "image/png")},
-    ).json()
-
-    resp = admin_client.get(f"/api/v1/evidence/{evidence['id']}/file")
-    assert resp.status_code == 200
-    assert resp.headers["content-type"] == "image/png"
-    assert resp.content == png
-
-
-def test_delete_evidence(admin_client: TestClient) -> None:
-    project = _create_project(admin_client)
-    type_obj = _create_type_with_one_default(admin_client)
-    suite = admin_client.post(
-        "/api/v1/suites",
-        json={
-            "project_id": project["id"],
-            "type_id": type_obj["id"],
-            "name": "S",
-            "header": {"project_name_line": "X"},
-        },
-    ).json()
-    case = admin_client.get(f"/api/v1/suites/{suite['id']}/cases").json()[0]
-    evidence = admin_client.post(
-        f"/api/v1/cases/{case['id']}/evidence",
-        files={"file": ("a.png", _png_bytes(), "image/png")},
-    ).json()
-
-    resp = admin_client.delete(f"/api/v1/evidence/{evidence['id']}")
-    assert resp.status_code == 204
+    db_session.commit()
 
     listing = admin_client.get(f"/api/v1/cases/{case['id']}/evidence").json()
-    assert listing == []
+    assert [row["caption"] for row in listing] == ["Step 1"]
+
+
+def test_screenshot_file_is_served(admin_client: TestClient, db_session: Session) -> None:
+    suite, case = _suite_with_default_case(admin_client)
+    row = _seed_test_lab_screenshot(db_session, case, suite, "Step 1")
+    resp = admin_client.get(f"/api/v1/evidence/{row.id}/file")
+    assert resp.status_code == 200
+    assert resp.content == _png_bytes()
+
+
+def test_evidence_cannot_be_deleted_by_hand(admin_client: TestClient, db_session: Session) -> None:
+    suite, case = _suite_with_default_case(admin_client)
+    row = _seed_test_lab_screenshot(db_session, case, suite, "Step 1")
+    assert admin_client.delete(f"/api/v1/evidence/{row.id}").status_code == 404
 
 
 @needs_xlsx_template
-def test_evidence_in_xlsx_export(admin_client: TestClient, tmp_path: Path) -> None:
-    project = _create_project(admin_client)
-    type_obj = _create_type_with_one_default(admin_client)
-    suite = admin_client.post(
-        "/api/v1/suites",
-        json={
-            "project_id": project["id"],
-            "type_id": type_obj["id"],
-            "name": "Evidence Suite",
-            "header": {"project_name_line": "KUSALA: Evidence Suite"},
-        },
-    ).json()
-    case = admin_client.get(f"/api/v1/suites/{suite['id']}/cases").json()[0]
-    admin_client.post(
-        f"/api/v1/cases/{case['id']}/evidence",
-        files={"file": ("proof.png", _png_bytes(), "image/png")},
-    )
-
+def test_export_puts_test_lab_screenshots_on_the_evidence_tabs(
+    admin_client: TestClient, db_session: Session, tmp_path: Path
+) -> None:
+    suite, case = _suite_with_default_case(admin_client)
+    _seed_test_lab_screenshot(db_session, case, suite, "Step 1")
     resp = admin_client.post(f"/api/v1/suites/{suite['id']}/export/xlsx")
-    assert resp.status_code == 200
-    out = tmp_path / "out.xlsx"
+    assert resp.status_code == 200, resp.text
+    out = tmp_path / "export.xlsx"
+    out.write_bytes(resp.content)
+
+    wb = load_workbook(out)
+    assert wb.sheetnames == ["Test Case", "Default test evidence", "Functional test evidence"]
+    assert len(wb["Default test evidence"]._images) == 1
+    assert len(wb["Functional test evidence"]._images) == 0
+    link = wb["Test Case"]["H13"].hyperlink
+    assert link is not None and "Default test evidence" in link.location
+
+
+@needs_xlsx_template
+def test_export_has_empty_evidence_tabs_when_nothing_was_run(
+    admin_client: TestClient, tmp_path: Path
+) -> None:
+    suite, _ = _suite_with_default_case(admin_client)
+    resp = admin_client.post(f"/api/v1/suites/{suite['id']}/export/xlsx")
+    out = tmp_path / "export.xlsx"
     out.write_bytes(resp.content)
     wb = load_workbook(out)
-    ws = wb["Test Case"]
-    assert ws["H13"].value == "'Default Scenarios'!A1"
-    assert "Default Scenarios" in wb.sheetnames
-    assert len(wb["Default Scenarios"]._images) == 1
-
-
-def _case_for_upload(admin_client: TestClient) -> dict:
-    project = _create_project(admin_client)
-    type_obj = _create_type_with_one_default(admin_client)
-    suite = admin_client.post(
-        "/api/v1/suites",
-        json={
-            "project_id": project["id"],
-            "type_id": type_obj["id"],
-            "name": "S",
-            "header": {"project_name_line": "X"},
-        },
-    ).json()
-    return admin_client.get(f"/api/v1/suites/{suite['id']}/cases").json()[0]
-
-
-def test_evidence_rejects_text_spoofed_as_png(admin_client: TestClient) -> None:
-    case = _case_for_upload(admin_client)
-    resp = admin_client.post(
-        f"/api/v1/cases/{case['id']}/evidence",
-        files={"file": ("looks-fine.png", b"<script>alert(1)</script>", "image/png")},
-    )
-    assert resp.status_code == 400
-
-
-def test_evidence_stores_sniffed_extension_not_the_client_filename(
-    admin_client: TestClient,
-) -> None:
-    case = _case_for_upload(admin_client)
-    resp = admin_client.post(
-        f"/api/v1/cases/{case['id']}/evidence",
-        files={"file": ("shot.html", _png_bytes(), "text/plain")},
-    )
-    assert resp.status_code == 201, resp.text
-    download = admin_client.get(f"/api/v1/evidence/{resp.json()['id']}/file")
-    assert download.status_code == 200
-    assert download.headers["content-type"] == "image/png"
+    assert wb.sheetnames == ["Test Case", "Default test evidence", "Functional test evidence"]
+    assert all(len(wb[name]._images) == 0 for name in wb.sheetnames[1:])

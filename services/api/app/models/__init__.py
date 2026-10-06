@@ -5,6 +5,7 @@ from app.models.apk import Apk
 from app.models.audit_log import AuditLog
 from app.models.bug import Bug
 from app.models.evidence import Evidence
+from app.models.feature_flag import FeatureFlag
 from app.models.generation_job import GenerationJob
 from app.models.note_snippet import NoteSnippet
 from app.models.password_reset_token import PasswordResetToken
@@ -28,6 +29,7 @@ __all__ = [
     "Bug",
     "DefaultTestCase",
     "Evidence",
+    "FeatureFlag",
     "GenerationJob",
     "NoteSnippet",
     "PasswordResetToken",

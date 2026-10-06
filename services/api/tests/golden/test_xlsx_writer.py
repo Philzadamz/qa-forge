@@ -102,9 +102,8 @@ def test_preserves_sheet_order_and_removes_sample_evidence_sheets(
     write_test_cases_xlsx(XLSX_TEMPLATE, sample_data, out)
 
     wb = load_workbook(out)
-    assert wb.sheetnames[0] == "Test Case"
+    assert wb.sheetnames == ["Test Case", "Default test evidence", "Functional test evidence"]
     assert "Cash Center" not in wb.sheetnames  # sample evidence sheet from the template, gone
-    assert "Cash Hub" in wb.sheetnames  # created fresh because a functional case needs it
 
 
 @needs_xlsx_template
@@ -192,12 +191,12 @@ def test_evidence_hyperlink_resolves_to_existing_cell_with_image(
     wb = load_workbook(out)
     ws = wb["Test Case"]
     evidence_cell = ws["H17"]  # Kusala_004, the only case with an evidence image
-    assert evidence_cell.value == "'Cash Hub'!A1"
-    assert evidence_cell.hyperlink.location == "'Cash Hub'!A1"
+    assert evidence_cell.value == "'Functional test evidence'!A1"
+    assert evidence_cell.hyperlink.location == "'Functional test evidence'!A1"
 
-    cash_hub = wb["Cash Hub"]
-    assert cash_hub["A1"].value.startswith("Kusala_004")
-    assert len(cash_hub._images) == 1
+    evidence_tab = wb["Functional test evidence"]
+    assert evidence_tab["A1"].value.startswith("Kusala_004")
+    assert len(evidence_tab._images) == 1
 
 
 @needs_xlsx_template

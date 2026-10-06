@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, apiFetch } from "@/lib/api";
+import { featureOn, useFeatures } from "@/lib/features";
 import { pasteStorySchema, type PasteStoryInput } from "@/lib/schemas/workspace";
 import type { Project, Story, Suite } from "@/lib/types/workspace";
 
@@ -21,6 +22,7 @@ import { ApkPanel } from "./apk-panel";
 import { SecretsPanel } from "./secrets-panel";
 
 export function ProjectDetailClient({ projectId }: { projectId: string }) {
+  const { data: features } = useFeatures();
   const queryClient = useQueryClient();
   const [showPaste, setShowPaste] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -175,7 +177,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
         </CardContent>
       </Card>
 
-      <ApkPanel projectId={projectId} />
+      {featureOn(features, "test_lab_android") && <ApkPanel projectId={projectId} />}
       <SecretsPanel projectId={projectId} />
     </div>
   );

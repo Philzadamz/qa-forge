@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { ApiError, apiFetch } from "@/lib/api";
+import { featureOn, useFeatures } from "@/lib/features";
 import type { Apk, Project, Run, RunStatus } from "@/lib/types/workspace";
 
 import { ApiSpecPanel } from "./api-spec-panel";
@@ -44,7 +45,12 @@ export function TestLabPanel({
 }) {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const [target, setTarget] = useState<Target>("web");
+  const [selectedTarget, setTarget] = useState<Target>("web");
+  const { data: features } = useFeatures();
+  const targets = (["web", "api", "android"] as Target[]).filter((t) =>
+    featureOn(features, `test_lab_${t}`),
+  );
+  const target = targets.includes(selectedTarget) ? selectedTarget : (targets[0] ?? "web");
   const [targetUrl, setTargetUrl] = useState("");
   const [apkId, setApkId] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -86,6 +92,21 @@ export function TestLabPanel({
     onError: (err: unknown) => setError(describeError(err, "Could not start the run.")),
   });
 
+  if (targets.length === 0) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Test Lab</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-muted-foreground text-sm">
+            All Test Lab targets are turned off. An admin can enable them in Settings.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <Card>
       <CardHeader>
@@ -100,13 +121,17 @@ export function TestLabPanel({
             onChange={(e) => setTarget(e.target.value as Target)}
             className="w-40"
           >
-            <option value="web">Web</option>
-            <option value="api">API</option>
-            <option value="android">Android</option>
+            {targets.map((t) => (
+              <option key={t} value={t}>
+                {t === "web" ? "Web" : t === "api" ? "API" : "Android"}
+              </option>
+            ))}
           </Select>
         </div>
 
-        {target === "api" && <ApiSpecPanel suiteId={suiteId} />}
+        {target === "api" && featureOn(features, "api_spec_import") && (
+          <ApiSpecPanel suiteId={suiteId} />
+        )}
 
         {target === "android" ? (
           <div className="flex flex-col gap-2">

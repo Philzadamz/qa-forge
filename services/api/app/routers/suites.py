@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.core.audit import record as audit_record
 from app.core.config import get_settings
 from app.core.enums import CaseSection, CaseSource, GenerationJobStatus, TestStatus
+from app.core.features import ensure_feature
 from app.core.rbac import require_project_access, require_user
 from app.db.session import get_db
 from app.models.generation_job import GenerationJob
@@ -218,6 +219,7 @@ def start_generation(
     db: Session = Depends(get_db),
     user: User = Depends(require_user),
 ) -> GenerationJob:
+    ensure_feature(db, "ai_case_generation")
     suite, _ = _get_suite_or_404(db, suite_id, user)
     story_ids = payload.story_ids or [uuid.UUID(s) for s in suite.story_ids]
     if not story_ids:

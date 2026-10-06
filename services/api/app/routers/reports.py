@@ -15,6 +15,7 @@ from app.core import usage
 from app.core.audit import record as audit_record
 from app.core.config import get_settings
 from app.core.enums import TemplateKind, TemplateStatus
+from app.core.features import require_feature
 from app.core.rbac import require_project_access, require_user
 from app.core.report_defaults import DEFAULT_APPROVAL_ROLES, DEFAULT_EXIT_CRITERIA
 from app.core.uploads import sniff_image
@@ -51,7 +52,10 @@ from app.services.reports.builder import (
 )
 from app.services.storage import build_storage
 
-router = APIRouter(tags=["reports"])
+router = APIRouter(
+    tags=["reports"],
+    dependencies=[Depends(require_feature("report_generation"))],
+)
 logger = logging.getLogger(__name__)
 
 
