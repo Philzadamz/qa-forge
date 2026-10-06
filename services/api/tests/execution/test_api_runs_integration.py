@@ -9,6 +9,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.config import get_settings
 from app.services.ai.client import FakeLLMClient
 
 
@@ -45,7 +46,12 @@ def _setup_suite(admin_client: TestClient, demo_api_url: str) -> tuple[dict, dic
     return project, suite
 
 
-def test_parse_live_openapi_spec_from_demo_api(admin_client: TestClient, demo_api_url: str) -> None:
+def test_parse_live_openapi_spec_from_demo_api(
+    admin_client: TestClient, demo_api_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The demo API is a loopback fixture, which the SSRF guard blocks unless it's allowlisted.
+    monkeypatch.setenv("SSRF_ALLOWED_HOSTS", '["127.0.0.1"]')
+    get_settings.cache_clear()
     resp = admin_client.post(
         "/api/v1/api-specs/parse",
         data={"kind": "openapi", "url": f"{demo_api_url}/openapi.json"},

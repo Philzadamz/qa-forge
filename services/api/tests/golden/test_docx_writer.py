@@ -190,7 +190,7 @@ def test_approvals_row_count(tmp_path: Path) -> None:
     write_report_docx(TOKENIZED_TEMPLATE, _make_report_data(), out)
 
     d = docx.Document(str(out))
-    table = d.tables[7]
+    table = d.tables[8]
     assert len(table.rows) == 3  # header + 2 approvals
     assert table.rows[1].cells[1].text == "Jane Doe"
     assert table.rows[2].cells[1].text == "John Smith"
@@ -217,9 +217,9 @@ def test_comments_render_as_separate_paragraphs(tmp_path: Path) -> None:
     write_report_docx(TOKENIZED_TEMPLATE, _make_report_data(), out)
 
     d = docx.Document(str(out))
-    texts = [p.text for p in d.paragraphs if p.text.strip()]
-    assert "Functional testing has been completed." in texts
-    assert "No blockers remain." in texts
+    box_texts = [p.text for t in d.tables for r in t.rows for c in r.cells for p in c.paragraphs]
+    assert "Functional testing has been completed." in box_texts
+    assert "No blockers remain." in box_texts
 
 
 @needs_tokenized_template

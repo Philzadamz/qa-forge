@@ -115,7 +115,7 @@ export default function ProjectsPage() {
                 <Label htmlFor="default_test_url">Default test URL</Label>
                 <Input id="default_test_url" {...register("default_test_url")} />
               </div>
-              <Button type="submit" disabled={isSubmitting} className="self-start md:col-span-2">
+              <Button type="submit" loading={isSubmitting} className="self-start md:col-span-2">
                 {isSubmitting ? "Creating…" : "Create project"}
               </Button>
             </form>

@@ -77,6 +77,7 @@ class ApprovalRow:
     staff_id: str
     signature: str = ""
     date: str = ""
+    signature_image: bytes | None = None
 
 
 @dataclass

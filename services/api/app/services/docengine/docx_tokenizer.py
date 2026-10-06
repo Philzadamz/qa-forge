@@ -35,11 +35,14 @@ this sample — personal data specific to one filled report, dropped along with 
 
 import copy
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import docx
 from docx.document import Document
+from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
+from docx.oxml.table import CT_Tbl
+from docx.shared import Length, Pt
 from docx.table import Table, _Cell, _Row
 from docx.text.paragraph import Paragraph
 
@@ -211,11 +214,98 @@ def _tokenize_approvals_table(table: Table) -> None:
     _set_cell_text(row.cells[0], "{{ a.action }}")
     _set_cell_text(row.cells[1], "{{ a.name }}")
     _set_cell_text(row.cells[2], "{{ a.staff_id }}")
-    _set_cell_text(row.cells[3], "{{ a.signature }}")
+    _set_cell_text(row.cells[3], "{{ a.signature_img }}")
     _set_cell_text(row.cells[4], "{{ a.date }}")
     for i in range(len(table.rows) - 1, 1, -1):
         _delete_row(table, i)
     _wrap_row_as_loop(table, 1, "{%tr for a in approvals %}", "{%tr endfor %}")
+
+
+COMMENTS_BOX_WIDTH_TWIPS = 9835  # same width as the Feature status table
+COMMENTS_BOX_MIN_HEIGHT_TWIPS = 1800
+
+
+def _comments_box_table() -> CT_Tbl:
+    """A single bordered cell the width of the report's tables, holding the comments loop.
+
+    A paragraph border would run to the paragraph's own width and grow without limit; a table
+    cell keeps the box aligned with the tables above it, and a minimum row height gives the
+    empty box a fixed size for the QA to type into.
+    """
+    tbl = OxmlElement("w:tbl")
+    tbl_pr = OxmlElement("w:tblPr")
+    tbl_w = OxmlElement("w:tblW")
+    tbl_w.set(qn("w:w"), str(COMMENTS_BOX_WIDTH_TWIPS))
+    tbl_w.set(qn("w:type"), "dxa")
+    tbl_pr.append(tbl_w)
+    borders = OxmlElement("w:tblBorders")
+    for side in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        edge = OxmlElement(f"w:{side}")
+        edge.set(qn("w:val"), "single")
+        edge.set(qn("w:sz"), "6")
+        edge.set(qn("w:space"), "0")
+        edge.set(qn("w:color"), "000000")
+        borders.append(edge)
+    tbl_pr.append(borders)
+    tbl.append(tbl_pr)
+
+    grid = OxmlElement("w:tblGrid")
+    col = OxmlElement("w:gridCol")
+    col.set(qn("w:w"), str(COMMENTS_BOX_WIDTH_TWIPS))
+    grid.append(col)
+    tbl.append(grid)
+
+    tr = OxmlElement("w:tr")
+    tr_pr = OxmlElement("w:trPr")
+    height = OxmlElement("w:trHeight")
+    height.set(qn("w:val"), str(COMMENTS_BOX_MIN_HEIGHT_TWIPS))
+    height.set(qn("w:hRule"), "atLeast")
+    tr_pr.append(height)
+    tr.append(tr_pr)
+    tc = OxmlElement("w:tc")
+    tc_pr = OxmlElement("w:tcPr")
+    tc_w = OxmlElement("w:tcW")
+    tc_w.set(qn("w:w"), str(COMMENTS_BOX_WIDTH_TWIPS))
+    tc_w.set(qn("w:type"), "dxa")
+    tc_pr.append(tc_w)
+    tc.append(tc_pr)
+    tc.append(OxmlElement("w:p"))
+    tr.append(tc)
+    tbl.append(tr)
+    return cast(CT_Tbl, tbl)
+
+
+def _take_section_break(paragraph: Paragraph) -> Any:
+    """The comments paragraph ends a Word section; keep that break out of the loop copies."""
+    ppr = paragraph._p.pPr
+    if ppr is None:
+        return None
+    section = ppr.find(qn("w:sectPr"))
+    if section is not None:
+        ppr.remove(section)
+    return section
+
+
+def _restore_section_break_after(box: CT_Tbl, section: Any) -> None:
+    """Re-attach the section break in an empty paragraph after the box.
+
+    The break was a hard page break before the Automation-to-manual ratio table. It is made
+    continuous so the Result Analysis tables flow on without a near-empty page.
+    """
+    type_el = section.find(qn("w:type"))
+    if type_el is None:
+        type_el = OxmlElement("w:type")
+        page_size = section.find(qn("w:pgSz"))
+        if page_size is not None:
+            page_size.addprevious(type_el)
+        else:
+            section.append(type_el)
+    type_el.set(qn("w:val"), "continuous")
+    carrier = OxmlElement("w:p")
+    carrier_ppr = OxmlElement("w:pPr")
+    carrier_ppr.append(section)
+    carrier.append(carrier_ppr)
+    box.addnext(carrier)
 
 
 def _tokenize_comments(doc: Document) -> None:
@@ -224,10 +314,69 @@ def _tokenize_comments(doc: Document) -> None:
             next_p = paragraph._p.getnext()
             if next_p is not None and next_p.tag == qn("w:p"):
                 target = Paragraph(next_p, paragraph._parent)
+                section_break = _take_section_break(target)
                 _set_paragraph_text(target, "{{ p }}")
                 _wrap_paragraph_as_loop(target, "{%p for p in comments %}", "{%p endfor %}")
+                box = _comments_box_table()
+                cell_p = box.find(qn("w:tr")).find(qn("w:tc")).find(qn("w:p"))
+                loop_parts = [target._p.getprevious(), target._p, target._p.getnext()]
+                for part in loop_parts:
+                    cell_p.addprevious(part)
+                cell_p.getparent().remove(cell_p)
+                paragraph._p.addnext(box)
+                if section_break is not None:
+                    _restore_section_break_after(box, section_break)
                 return
     raise DocxTokenizeError("Could not find the Comments/Observation section — template changed?")
+
+
+LABEL_FONT = ("Tahoma", Pt(10), True)
+VALUE_FONT = ("Verdana", Pt(11), False)
+_LABEL_TAGS = ("{{ a.action }}", "{{ loop.index }}")
+
+
+def _style_cell(cell: _Cell, font: tuple[str, Length, bool]) -> None:
+    name, size, bold = font
+    for paragraph in cell.paragraphs:
+        for run in paragraph.runs:
+            run.font.name = name
+            run.font.size = size
+            run.font.bold = bold
+
+
+def _apply_typography(doc: Document) -> None:
+    """Labels and headers are Tahoma 10 bold; the values the QA fills in are Verdana 11.
+
+    A cell with no template tag is static text: a label or a header. A tagged cell is a
+    value, except the few tags that name a row (approval action, S/N) which read as labels.
+    """
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                text = cell.text
+                is_value = ("{{" in text or "{%" in text) and not any(
+                    tag in text for tag in _LABEL_TAGS
+                )
+                _style_cell(cell, VALUE_FONT if is_value else LABEL_FONT)
+    for paragraph in doc.paragraphs:
+        if "certified for deployment" in paragraph.text:
+            for run in paragraph.runs:
+                run.font.name = LABEL_FONT[0]
+                run.font.size = LABEL_FONT[1]
+                run.font.bold = LABEL_FONT[2]
+
+
+BODY_BOTTOM_MARGIN_TWIPS = "580"
+
+
+def _align_section_margins(doc: Document) -> None:
+    """Word starts a new page at a continuous section break when the two sections' bottom
+    margins differ. The raw template's Result Analysis section reserved extra bottom space,
+    which left a near-empty page before the Automation-to-manual ratio table."""
+    for section in doc.element.body.iter(qn("w:sectPr")):
+        margins = section.find(qn("w:pgMar"))
+        if margins is not None:
+            margins.set(qn("w:bottom"), BODY_BOTTOM_MARGIN_TWIPS)
 
 
 def tokenize_report_template(source_path: Path, output_path: Path) -> None:
@@ -247,6 +396,8 @@ def tokenize_report_template(source_path: Path, output_path: Path) -> None:
     _tokenize_approvals_table(tables[7])
     _tokenize_comments(doc)
     _fix_footer_classification_label(doc)
+    _apply_typography(doc)
+    _align_section_margins(doc)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     doc.save(str(output_path))

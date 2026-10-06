@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 
+import { BackButton } from "@/components/back-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -154,6 +155,7 @@ export function TypeDetailClient({ typeId }: { typeId: string }) {
 
   return (
     <div className="flex flex-col gap-6">
+      <BackButton fallbackHref="/types" label="Back to types" />
       <div className="flex items-start justify-between">
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
@@ -223,7 +225,7 @@ export function TypeDetailClient({ typeId }: { typeId: string }) {
                 Replace this type&apos;s existing default cases
               </label>
               <div className="flex gap-2">
-                <Button onClick={() => confirmImport.mutate()} disabled={confirmImport.isPending}>
+                <Button onClick={() => confirmImport.mutate()} loading={confirmImport.isPending}>
                   {confirmImport.isPending ? "Saving…" : "Save imported cases"}
                 </Button>
                 <Button variant="outline" onClick={() => setPreview(null)}>

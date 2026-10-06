@@ -4,7 +4,8 @@ import argparse
 import sys
 from pathlib import Path
 
-from app.core.config import REPO_ROOT
+from app.core.config import REPO_ROOT, get_settings
+from app.core.report_defaults import DEFAULT_APPROVAL_ROLES, DEFAULT_EXIT_CRITERIA
 from app.core.security import hash_password
 from app.db.session import get_sessionmaker
 from app.models.report_defaults import ReportDefaults
@@ -12,6 +13,8 @@ from app.models.test_case_type import DefaultTestCase, TestCaseType
 from app.models.user import User
 from app.services.docengine.docx_tokenizer import DocxTokenizeError, tokenize_report_template
 from app.services.docengine.xlsx_importer import XlsxImportError, parse_default_scenarios
+from app.services.retention import sweep_retention
+from app.services.storage import build_storage
 
 DEFAULT_TEMPLATE_PATH = REPO_ROOT / "templates" / "source" / "QA_Test_Cases_Template.xlsx"
 REPORT_SOURCE_TEMPLATE_PATH = REPO_ROOT / "templates" / "source" / "QA_Test_Report_Template.docx"
@@ -118,36 +121,39 @@ def seed_report_defaults() -> None:
             return
         session.add(
             ReportDefaults(
-                exit_criteria=[
-                    "All Test cases applicable were executed with screenshots attached",
-                    "All defects raised were resolved and confirmed as fixed",
-                    "Completion of User Acceptance Test with the Product owner and other "
-                    "Stakeholders",
-                ],
-                approval_roles=[
-                    {"action": "Tested By", "default_name": "", "default_staff_id": ""},
-                    {
-                        "action": "Product Owner Concurrence",
-                        "default_name": "",
-                        "default_staff_id": "",
-                    },
-                    {
-                        "action": "FT Lead, Quality Assurance",
-                        "default_name": "",
-                        "default_staff_id": "",
-                    },
-                    {
-                        "action": "Head Quality Assurance",
-                        "default_name": "",
-                        "default_staff_id": "",
-                    },
-                ],
+                exit_criteria=DEFAULT_EXIT_CRITERIA,
+                approval_roles=DEFAULT_APPROVAL_ROLES,
                 classification_label="Public",
                 organisation_name="",
             )
         )
         session.commit()
         print("Seeded report defaults (3 exit criteria, 4 approval roles, label 'Public').")
+    finally:
+        session.close()
+
+
+def retention_sweep() -> None:
+    """PRD §12 Privacy: purge evidence/upload files past retention and prune the audit log.
+    Intended to be run on a schedule (e.g. a daily cron calling `make retention-sweep`) —
+    there's no in-process scheduler in local mode (docs/decisions/001)."""
+    settings = get_settings()
+    storage = build_storage(settings)
+    session = get_sessionmaker()()
+    try:
+        result = sweep_retention(
+            session,
+            storage,
+            evidence_days=settings.retention_evidence_days,
+            audit_log_days=settings.retention_audit_log_days,
+        )
+        print(
+            f"Deleted {result.evidence_deleted} evidence file(s) older than "
+            f"{settings.retention_evidence_days}d, purged {result.stories_purged} story "
+            f"upload(s) and {result.reports_purged} report file(s), removed "
+            f"{result.audit_log_deleted} audit log row(s) older than "
+            f"{settings.retention_audit_log_days}d."
+        )
     finally:
         session.close()
 
@@ -171,6 +177,10 @@ def main() -> None:
     subparsers.add_parser(
         "seed-report-defaults", help="Seed exit criteria, approval roles, and classification label"
     )
+    subparsers.add_parser(
+        "retention-sweep",
+        help="Purge evidence/upload files past retention and prune the audit log",
+    )
 
     args = parser.parse_args()
     if args.command == "seed-admin":
@@ -181,6 +191,8 @@ def main() -> None:
         tokenize_report()
     elif args.command == "seed-report-defaults":
         seed_report_defaults()
+    elif args.command == "retention-sweep":
+        retention_sweep()
 
 
 if __name__ == "__main__":

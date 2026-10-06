@@ -9,6 +9,7 @@ import { useForm } from "react-hook-form";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { ApiError, apiFetch } from "@/lib/api";
 import { loginSchema, type LoginInput } from "@/lib/schemas/auth";
@@ -69,9 +70,9 @@ export function LoginForm() {
                 Forgot password?
               </Link>
             </div>
-            <Input
+            <PasswordInput
               id="password"
-              type="password"
+
               autoComplete="current-password"
               aria-invalid={!!errors.password}
               aria-describedby={errors.password ? "password-error" : undefined}
@@ -88,7 +89,7 @@ export function LoginForm() {
               {formError}
             </p>
           )}
-          <Button type="submit" disabled={isSubmitting}>
+          <Button type="submit" loading={isSubmitting}>
             {isSubmitting ? "Signing in…" : "Sign in"}
           </Button>
         </form>

@@ -48,15 +48,32 @@ class Settings(BaseSettings):
 
     # AI (PRD §8, ADM-AI-1). Provider is swappable — DeepSeek for now, Anthropic once a key
     # is available for production (docs/decisions/004) — without touching pipeline code.
-    ai_provider: Literal["deepseek", "anthropic", "fake"] = "fake"
+    ai_provider: Literal["deepseek", "openai_compatible", "anthropic", "fake"] = "fake"
     deepseek_api_key: str | None = None
     deepseek_base_url: str = "https://api.deepseek.com"
+    # Any other OpenAI-compatible gateway (e.g. LLM7 at https://api.llm7.io/v1).
+    openai_compatible_api_key: str | None = None
+    openai_compatible_base_url: str | None = None
     anthropic_api_key: str | None = None
     ai_model_generation: str = "deepseek-chat"
     ai_model_drafting: str = "deepseek-chat"
     ai_model_light: str = "deepseek-chat"
     ai_temperature: float = 0.2
     ai_max_output_tokens: int = 8192
+    # Left at 0 until an operator sets real provider pricing (PRD §12 "token usage"/usage
+    # dashboard) — a hardcoded price would silently go stale as providers change rates.
+    ai_cost_per_million_input_tokens: float = 0.0
+    ai_cost_per_million_output_tokens: float = 0.0
+
+    # Hosts the server may fetch from even though they resolve to a private/loopback address
+    # (PRD §12 SSRF allowlist). Empty in production; set for local demo fixtures only.
+    ssrf_allowed_hosts: list[str] = Field(default_factory=list)
+
+    # Retention (PRD §12 Privacy): uploads/evidence default 180 days, audit log default 2
+    # years. Swept by `python -m app.cli retention-sweep`, run on a schedule by the operator
+    # (no in-process scheduler in local mode — docs/decisions/001).
+    retention_evidence_days: int = 180
+    retention_audit_log_days: int = 730
 
     # Android runner (PRD §7.6.3). LocalEmulatorProvider targets exactly this AVD — it never
     # touches an emulator instance it wasn't told about, even if other devices are attached.

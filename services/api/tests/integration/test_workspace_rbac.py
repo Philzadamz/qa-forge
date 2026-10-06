@@ -60,6 +60,11 @@ WORKSPACE_ENDPOINTS: list[tuple[str, str]] = [
     ("GET", f"/api/v1/projects/{ZERO}/apks"),
     ("POST", f"/api/v1/projects/{ZERO}/apks"),
     ("DELETE", f"/api/v1/apks/{ZERO}"),
+    ("POST", f"/api/v1/reports/{ZERO}/approvals/0/signature"),
+    ("GET", f"/api/v1/reports/{ZERO}/approvals/0/signature"),
+    ("DELETE", f"/api/v1/reports/{ZERO}/approvals/0/signature"),
+    ("GET", "/api/v1/dashboard"),
+    ("GET", "/api/v1/admin/audit-log"),
 ]
 
 

@@ -21,9 +21,11 @@ from collections.abc import Callable
 
 from sqlalchemy.orm import Session
 
+from app.core import usage
 from app.core.config import Settings, get_settings
 from app.core.crypto import decrypt_secret
 from app.core.enums import CaseSection, RunStatus, RunStepOutcome, TestStatus
+from app.core.metrics import RUN_DURATION, run_duration_seconds
 from app.db.base import utcnow
 from app.db.session import get_sessionmaker
 from app.models.evidence import Evidence
@@ -31,6 +33,7 @@ from app.models.project import Project
 from app.models.secret import Secret
 from app.models.test_case import TestCase
 from app.models.test_run import RunStep, TestRun
+from app.models.usage_record import UsageRecord
 from app.services.execution.agent import CaseRunResult, CaseStepEvent, run_case_with_agent
 from app.services.execution.agent_client import AgentClientError, build_agent_client
 from app.services.execution.deterministic import routine_for_tags
@@ -100,7 +103,7 @@ def run_execution_job(run_id: uuid.UUID) -> None:
         from playwright.sync_api import sync_playwright
 
         cancelled = False
-        with sync_playwright() as pw:
+        with usage.track() as sink, sync_playwright() as pw:
             browser = pw.chromium.launch(headless=True)
             try:
                 for case in ordered_cases:
@@ -164,6 +167,17 @@ def run_execution_job(run_id: uuid.UUID) -> None:
             finally:
                 browser.close()
 
+        if sink.events:
+            session.add(
+                UsageRecord(
+                    feature="execution_run",
+                    entity_id=str(run_id),
+                    model=settings.ai_model_generation,
+                    prompt_tokens=sink.prompt_tokens,
+                    completion_tokens=sink.completion_tokens,
+                )
+            )
+
         if cancelled:
             run.status = RunStatus.CANCELLED
         elif counts["failed"] == 0 and counts["blocked"] == 0:
@@ -171,6 +185,9 @@ def run_execution_job(run_id: uuid.UUID) -> None:
         else:
             run.status = RunStatus.FAILED
         run.finished_at = utcnow()
+        RUN_DURATION.labels(target="web", status=run.status.value).observe(
+            run_duration_seconds(run.started_at, run.finished_at)
+        )
         run.summary_json = {"total": len(ordered_cases), **counts, "cases": results}
         session.commit()
         publish(str(run_id), {"type": "run_done", "status": run.status.value})
@@ -179,6 +196,9 @@ def run_execution_job(run_id: uuid.UUID) -> None:
         run.status = RunStatus.ERROR
         run.error = str(exc)[:2000]
         run.finished_at = utcnow()
+        RUN_DURATION.labels(target="web", status="error").observe(
+            run_duration_seconds(run.started_at, run.finished_at)
+        )
         session.commit()
         publish(str(run_id), {"type": "run_done", "status": "error", "error": str(exc)[:500]})
     finally:

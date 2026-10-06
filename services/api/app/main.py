@@ -12,6 +12,7 @@ from app.routers import (
     auth,
     bugs,
     cases,
+    dashboard,
     health,
     projects,
     reports,
@@ -61,6 +62,7 @@ def create_app() -> FastAPI:
     app.include_router(runs.router, prefix=settings.api_prefix)
     app.include_router(api_lab.router, prefix=settings.api_prefix)
     app.include_router(apks.router, prefix=settings.api_prefix)
+    app.include_router(dashboard.router, prefix=settings.api_prefix)
     return app
 
 

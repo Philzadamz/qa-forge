@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
+import { BackButton } from "@/components/back-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -122,6 +123,10 @@ export function RunDetailClient({ runId }: { runId: string }) {
 
   return (
     <div className="flex flex-col gap-6">
+      <BackButton
+        fallbackHref={run?.suite_id ? `/suites/${run.suite_id}` : "/dashboard"}
+        label="Back to suite"
+      />
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Test Lab Run</h1>
@@ -135,7 +140,7 @@ export function RunDetailClient({ runId }: { runId: string }) {
             <Button
               variant="outline"
               onClick={() => cancelRun.mutate()}
-              disabled={cancelRun.isPending}
+              loading={cancelRun.isPending}
             >
               Stop
             </Button>
@@ -164,7 +169,7 @@ export function RunDetailClient({ runId }: { runId: string }) {
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle>Results ({caseResults.length})</CardTitle>
             {anyUnapplied && (
-              <Button onClick={() => applyResults.mutate(null)} disabled={applyResults.isPending}>
+              <Button onClick={() => applyResults.mutate(null)} loading={applyResults.isPending}>
                 {applyResults.isPending ? "Applying…" : "Apply all to suite"}
               </Button>
             )}
@@ -192,7 +197,7 @@ export function RunDetailClient({ runId }: { runId: string }) {
                         size="sm"
                         variant="outline"
                         onClick={() => applyResults.mutate([caseId])}
-                        disabled={applyResults.isPending}
+                        loading={applyResults.isPending}
                       >
                         Apply
                       </Button>

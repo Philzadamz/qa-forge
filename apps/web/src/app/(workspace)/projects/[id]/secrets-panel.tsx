@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { ApiError, apiFetch } from "@/lib/api";
@@ -97,9 +98,9 @@ export function SecretsPanel({ projectId }: { projectId: string }) {
             </div>
             <div className="flex flex-col gap-2">
               <Label htmlFor="secret-value">Value</Label>
-              <Input
+              <PasswordInput
                 id="secret-value"
-                type="password"
+
                 {...register("value")}
                 aria-invalid={!!errors.value}
               />
@@ -115,7 +116,7 @@ export function SecretsPanel({ projectId }: { projectId: string }) {
                 ))}
               </Select>
             </div>
-            <Button type="submit" disabled={isSubmitting} className="self-start">
+            <Button type="submit" loading={isSubmitting} className="self-start">
               {isSubmitting ? "Saving…" : "Save secret"}
             </Button>
           </form>

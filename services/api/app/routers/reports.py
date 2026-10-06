@@ -4,16 +4,20 @@ import logging
 import tempfile
 import uuid
 from pathlib import Path
+from typing import Any, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi.responses import Response, StreamingResponse
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from app.core import usage
 from app.core.audit import record as audit_record
 from app.core.config import get_settings
-from app.core.enums import TemplateKind, TemplateStatus, TestStatus
+from app.core.enums import TemplateKind, TemplateStatus
 from app.core.rbac import require_project_access, require_user
+from app.core.report_defaults import DEFAULT_APPROVAL_ROLES, DEFAULT_EXIT_CRITERIA
+from app.core.uploads import sniff_image
 from app.db.session import get_db
 from app.models.bug import Bug
 from app.models.project import Project
@@ -22,11 +26,12 @@ from app.models.report_defaults import ReportDefaults
 from app.models.template import Template
 from app.models.test_case import TestCase
 from app.models.test_suite import TestSuite
+from app.models.usage_record import UsageRecord
 from app.models.user import User
 from app.schemas.reports import ReportOut, ReportRenderData, ReportUpdate
 from app.services.ai.client import LLMError, build_llm_client
 from app.services.ai.draft_report import PROMPT_VERSION as DRAFT_PROMPT_VERSION
-from app.services.ai.draft_report import draft_report
+from app.services.ai.draft_report import draft_feature_descriptions
 from app.services.docengine.docx_writer import write_report_docx
 from app.services.docengine.models import (
     ApprovalRow,
@@ -94,7 +99,6 @@ def draft_suite_report(
 ) -> Report:
     suite, project = _get_suite_or_404(db, suite_id, user)
     cases = db.query(TestCase).filter(TestCase.suite_id == suite.id).all()
-    included = [c for c in cases if c.included]
     bugs = db.query(Bug).filter(Bug.suite_id == suite.id).all()
 
     result = compute_result_counts(cases, suite.test_cycle)
@@ -102,46 +106,45 @@ def draft_suite_report(
     ratio = compute_automation_ratio(cases)
     certified = suggest_certified(result, bug_counts)
     features = functional_features(cases)
-    non_passed = [c for c in included if c.status != TestStatus.PASSED]
 
     defaults_row = db.query(ReportDefaults).order_by(ReportDefaults.created_at).first()
-    exit_criteria = defaults_row.exit_criteria if defaults_row else []
-    approval_roles = defaults_row.approval_roles if defaults_row else []
+    exit_criteria = (
+        defaults_row.exit_criteria
+        if defaults_row and defaults_row.exit_criteria
+        else DEFAULT_EXIT_CRITERIA
+    )
+    approval_roles = (
+        defaults_row.approval_roles
+        if defaults_row and defaults_row.approval_roles
+        else DEFAULT_APPROVAL_ROLES
+    )
     classification_label = defaults_row.classification_label if defaults_row else "Public"
 
     feature_descriptions: dict[str, str] = {}
-    exception_drafts: dict[str, dict[str, object]] = {}
-    comments: list[str] = []
     try:
         settings = get_settings()
         client = build_llm_client(settings)
-        draft = draft_report(
-            client,
-            product_name=project.name,
-            features=features,
-            non_passed_cases=[
-                {
-                    "case_id": c.display_id,
-                    "feature": c.feature,
-                    "scenario": c.scenario,
-                    "status": c.status.value,
-                    "actual_result": c.actual_result,
-                }
-                for c in non_passed
-            ],
-            bugs=[
-                {"title": b.title, "status": b.status.value, "severity": b.severity.value}
-                for b in bugs
-            ],
-            pass_rate=(result.passed / result.total) if result.total else 0.0,
-            model=settings.ai_model_drafting,
-        )
+        with usage.track() as sink:
+            draft = draft_feature_descriptions(
+                client,
+                product_name=project.name,
+                features=features,
+                model=settings.ai_model_drafting,
+            )
+        if sink.events:
+            db.add(
+                UsageRecord(
+                    actor_id=user.id,
+                    feature="report_draft",
+                    entity_id=str(suite_id),
+                    model=settings.ai_model_drafting,
+                    prompt_tokens=sink.prompt_tokens,
+                    completion_tokens=sink.completion_tokens,
+                )
+            )
         feature_descriptions = {f.name: f.description for f in draft.feature_descriptions}
-        exception_drafts = {e.case_id: e.model_dump() for e in draft.exceptions}
-        comments = draft.comments
     except (LLMError, ValidationError) as exc:
         logger.warning("Report draft AI call failed for suite %s: %s", suite_id, exc)
-        comments = [f"(AI draft unavailable — {exc}. Fill in comments manually.)"]
 
     feature_rows = [
         {
@@ -156,21 +159,23 @@ def draft_suite_report(
     ]
 
     exception_rows = [
-        exception_drafts.get(
-            c.display_id,
-            {
-                "case_id": c.display_id,
-                "status_type": c.status.value,
-                "description": c.actual_result or "See case for details.",
-                "severity": "Medium",
-                "risk": "Needs review.",
-            },
-        )
-        for c in non_passed
+        {
+            "case_id": "N/A",
+            "status_type": "N/A",
+            "description": "N/A",
+            "severity": "N/A",
+            "risk": "N/A",
+        }
     ]
 
     approvals = [
-        {"action": r.get("action", ""), "name": "", "staff_id": "", "signature": "", "date": ""}
+        {
+            "action": r.get("action", ""),
+            "name": "",
+            "staff_id": "",
+            "signature_key": None,
+            "date": "",
+        }
         for r in approval_roles
     ]
 
@@ -204,7 +209,7 @@ def draft_suite_report(
             "open": bug_counts.open,
         },
         "exceptions": exception_rows,
-        "comments": comments,
+        "comments": [],
         "approvals": approvals,
         "classification_label": classification_label,
         "ra_overridden": False,
@@ -284,6 +289,114 @@ def update_report(
     return report
 
 
+SIGNATURE_MAX_BYTES = 2 * 1024 * 1024
+
+
+def _approval_or_404(report: Report, index: int) -> dict[str, Any]:
+    approvals = report.fields_json.get("approvals")
+    if not isinstance(approvals, list) or not 0 <= index < len(approvals):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Approval row not found")
+    row = approvals[index]
+    if not isinstance(row, dict):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Approval row not found")
+    return cast(dict[str, Any], row)
+
+
+def _set_signature_key(report: Report, index: int, key: str | None) -> None:
+    approvals = [dict(row) for row in cast(list[dict[str, Any]], report.fields_json["approvals"])]
+    approvals[index]["signature_key"] = key
+    report.fields_json = {**report.fields_json, "approvals": approvals}
+
+
+@router.post("/reports/{report_id}/approvals/{index}/signature", response_model=ReportOut)
+async def upload_signature(
+    report_id: uuid.UUID,
+    index: int,
+    request: Request,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> Report:
+    report, _, _ = _get_report_or_404(db, report_id, user)
+    row = _approval_or_404(report, index)
+    raw = await file.read()
+    if len(raw) > SIGNATURE_MAX_BYTES:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Signature image is too large (max 2 MB)")
+    sniffed = sniff_image(raw)
+    if sniffed is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Unsupported signature file. Upload a PNG, JPEG, GIF, or WebP image.",
+        )
+    _, extension = sniffed
+
+    storage = build_storage(get_settings())
+    previous = row.get("signature_key")
+    key = f"signatures/{report.id}/{index}-{uuid.uuid4().hex}.{extension}"
+    storage.put(key, raw)
+    _set_signature_key(report, index, key)
+    if isinstance(previous, str):
+        storage.delete(previous)
+    audit_record(
+        db,
+        actor_id=user.id,
+        action="upload_signature",
+        entity="report",
+        entity_id=str(report.id),
+        diff={"approval_index": index},
+        request=request,
+    )
+    db.commit()
+    db.refresh(report)
+    return report
+
+
+@router.get("/reports/{report_id}/approvals/{index}/signature")
+def get_signature(
+    report_id: uuid.UUID,
+    index: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> Response:
+    report, _, _ = _get_report_or_404(db, report_id, user)
+    row = _approval_or_404(report, index)
+    key = row.get("signature_key")
+    if not isinstance(key, str):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No signature for this row")
+    raw = build_storage(get_settings()).get(key)
+    sniffed = sniff_image(raw)
+    content_type = sniffed[0] if sniffed else "application/octet-stream"
+    return Response(content=raw, media_type=content_type)
+
+
+@router.delete("/reports/{report_id}/approvals/{index}/signature", response_model=ReportOut)
+def remove_signature(
+    report_id: uuid.UUID,
+    index: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+) -> Report:
+    report, _, _ = _get_report_or_404(db, report_id, user)
+    row = _approval_or_404(report, index)
+    previous = row.get("signature_key")
+    _set_signature_key(report, index, None)
+    if isinstance(previous, str):
+        build_storage(get_settings()).delete(previous)
+    audit_record(
+        db,
+        actor_id=user.id,
+        action="remove_signature",
+        entity="report",
+        entity_id=str(report.id),
+        diff={"approval_index": index},
+        request=request,
+    )
+    db.commit()
+    db.refresh(report)
+    return report
+
+
 @router.post("/reports/{report_id}/render")
 def render_report(
     report_id: uuid.UUID,
@@ -321,6 +434,7 @@ def render_report(
                 "ra_overridden with a reason to use the numbers as saved.",
             )
 
+    storage = build_storage(get_settings())
     report_data = ReportData(
         product_name=data.product_name,
         pr_links=data.pr_links,
@@ -337,12 +451,20 @@ def render_report(
         bugs=BugsSummary(**data.bugs.model_dump()),
         exceptions=[ExceptionRow(**e.model_dump()) for e in data.exceptions],
         comments=data.comments,
-        approvals=[ApprovalRow(**a.model_dump()) for a in data.approvals],
+        approvals=[
+            ApprovalRow(
+                action=a.action,
+                name=a.name,
+                staff_id=a.staff_id,
+                date=a.date,
+                signature_image=storage.get(a.signature_key) if a.signature_key else None,
+            )
+            for a in data.approvals
+        ],
         classification_label=data.classification_label,
     )
 
     settings = get_settings()
-    storage = build_storage(settings)
     active_template = (
         db.query(Template)
         .filter(

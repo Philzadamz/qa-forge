@@ -20,9 +20,11 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
+from app.core import usage
 from app.core.config import get_settings
 from app.core.crypto import decrypt_secret
 from app.core.enums import RunStatus, RunStepOutcome, TestStatus
+from app.core.metrics import RUN_DURATION, run_duration_seconds
 from app.db.base import utcnow
 from app.db.session import get_sessionmaker
 from app.models.apk import Apk
@@ -31,6 +33,7 @@ from app.models.project import Project
 from app.models.secret import Secret
 from app.models.test_case import TestCase
 from app.models.test_run import RunStep, TestRun
+from app.models.usage_record import UsageRecord
 from app.services.execution.agent import CaseRunResult, CaseStepEvent
 from app.services.execution.agent_client import AgentClientError, build_agent_client
 from app.services.execution.android_agent import run_case_with_android_agent
@@ -146,90 +149,107 @@ def run_android_execution_job(run_id: uuid.UUID) -> None:
         from appium import webdriver
         from appium.options.android import UiAutomator2Options
 
-        for case in ordered_cases:
-            if is_cancelled(str(run_id)):
-                cancelled = True
-                break
-            publish(
-                str(run_id),
-                {"type": "case_started", "case_id": str(case.id), "display_id": case.display_id},
-            )
-
-            _adb(adb_path, "-s", device.udid, "shell", "am", "force-stop", apk.package_name)
-            _adb(adb_path, "-s", device.udid, "logcat", "-c")
-
-            options = UiAutomator2Options()
-            options.platform_name = "Android"
-            options.udid = device.udid
-            options.automation_name = "UiAutomator2"
-            options.app_package = apk.package_name
-            options.app_activity = apk.launch_activity
-            options.no_reset = True
-            options.auto_grant_permissions = True
-            options.new_command_timeout = 120
-
-            driver = webdriver.Remote(device.appium_server_url, options=options)
-            on_step = _make_step_persister(session, storage, run_id=run.id, case=case)
-            try:
-                tools = AndroidTools(driver, package_name=apk.package_name)
-                client = build_agent_client(settings)
-                try:
-                    case_result = run_case_with_android_agent(
-                        client,
-                        tools=tools,
-                        feature=case.feature,
-                        scenario=case.scenario,
-                        steps=list(case.steps),
-                        expected_result=case.expected_result,
-                        app_label=apk.label or apk.package_name,
-                        resolve_secret=resolve_secret,
-                        model=settings.ai_model_generation,
-                        on_step=on_step,
-                    )
-                except AgentClientError as exc:
-                    case_result = CaseRunResult(
-                        status=TestStatus.BLOCKED,
-                        actual_result=f"Agent error: {exc}",
-                        confidence=0.0,
-                    )
-            finally:
-                driver.quit()
-
-            status = case_result.status
-            actual_result = case_result.actual_result
-            crash_context = _check_for_crash(adb_path, device.udid, apk.package_name)
-            if crash_context:
-                status = TestStatus.FAILED
-                actual_result = f"App crashed during this case. {actual_result}".strip()
-                on_step(
-                    CaseStepEvent(
-                        seq=len(case_result.steps) + 1,
-                        action="crash_detected",
-                        target=apk.package_name,
-                        input_masked=None,
-                        assertion=None,
-                        outcome=RunStepOutcome.ERROR,
-                        message=crash_context[:2000],
-                        screenshot=None,
-                        duration_ms=0,
-                    )
+        with usage.track() as sink:
+            for case in ordered_cases:
+                if is_cancelled(str(run_id)):
+                    cancelled = True
+                    break
+                publish(
+                    str(run_id),
+                    {
+                        "type": "case_started",
+                        "case_id": str(case.id),
+                        "display_id": case.display_id,
+                    },
                 )
 
-            results[str(case.id)] = {
-                "status": status.value,
-                "actual_result": actual_result,
-                "confidence": case_result.confidence,
-                "mode": "agent",
-                "applied": False,
-            }
-            if status == TestStatus.PASSED:
-                counts["passed"] += 1
-            elif status == TestStatus.FAILED:
-                counts["failed"] += 1
-            else:
-                counts["blocked"] += 1
-            publish(
-                str(run_id), {"type": "case_done", "case_id": str(case.id), "status": status.value}
+                _adb(adb_path, "-s", device.udid, "shell", "am", "force-stop", apk.package_name)
+                _adb(adb_path, "-s", device.udid, "logcat", "-c")
+
+                options = UiAutomator2Options()
+                options.platform_name = "Android"
+                options.udid = device.udid
+                options.automation_name = "UiAutomator2"
+                options.app_package = apk.package_name
+                options.app_activity = apk.launch_activity
+                options.no_reset = True
+                options.auto_grant_permissions = True
+                options.new_command_timeout = 120
+
+                driver = webdriver.Remote(device.appium_server_url, options=options)
+                on_step = _make_step_persister(session, storage, run_id=run.id, case=case)
+                try:
+                    tools = AndroidTools(driver, package_name=apk.package_name)
+                    client = build_agent_client(settings)
+                    try:
+                        case_result = run_case_with_android_agent(
+                            client,
+                            tools=tools,
+                            feature=case.feature,
+                            scenario=case.scenario,
+                            steps=list(case.steps),
+                            expected_result=case.expected_result,
+                            app_label=apk.label or apk.package_name,
+                            resolve_secret=resolve_secret,
+                            model=settings.ai_model_generation,
+                            on_step=on_step,
+                        )
+                    except AgentClientError as exc:
+                        case_result = CaseRunResult(
+                            status=TestStatus.BLOCKED,
+                            actual_result=f"Agent error: {exc}",
+                            confidence=0.0,
+                        )
+                finally:
+                    driver.quit()
+
+                status = case_result.status
+                actual_result = case_result.actual_result
+                crash_context = _check_for_crash(adb_path, device.udid, apk.package_name)
+                if crash_context:
+                    status = TestStatus.FAILED
+                    actual_result = f"App crashed during this case. {actual_result}".strip()
+                    on_step(
+                        CaseStepEvent(
+                            seq=len(case_result.steps) + 1,
+                            action="crash_detected",
+                            target=apk.package_name,
+                            input_masked=None,
+                            assertion=None,
+                            outcome=RunStepOutcome.ERROR,
+                            message=crash_context[:2000],
+                            screenshot=None,
+                            duration_ms=0,
+                        )
+                    )
+
+                results[str(case.id)] = {
+                    "status": status.value,
+                    "actual_result": actual_result,
+                    "confidence": case_result.confidence,
+                    "mode": "agent",
+                    "applied": False,
+                }
+                if status == TestStatus.PASSED:
+                    counts["passed"] += 1
+                elif status == TestStatus.FAILED:
+                    counts["failed"] += 1
+                else:
+                    counts["blocked"] += 1
+                publish(
+                    str(run_id),
+                    {"type": "case_done", "case_id": str(case.id), "status": status.value},
+                )
+
+        if sink.events:
+            session.add(
+                UsageRecord(
+                    feature="execution_run",
+                    entity_id=str(run_id),
+                    model=settings.ai_model_generation,
+                    prompt_tokens=sink.prompt_tokens,
+                    completion_tokens=sink.completion_tokens,
+                )
             )
 
         if cancelled:
@@ -239,6 +259,9 @@ def run_android_execution_job(run_id: uuid.UUID) -> None:
         else:
             run.status = RunStatus.FAILED
         run.finished_at = utcnow()
+        RUN_DURATION.labels(target="android", status=run.status.value).observe(
+            run_duration_seconds(run.started_at, run.finished_at)
+        )
         run.summary_json = {"total": len(ordered_cases), **counts, "cases": results}
         session.commit()
         publish(str(run_id), {"type": "run_done", "status": run.status.value})
@@ -247,6 +270,9 @@ def run_android_execution_job(run_id: uuid.UUID) -> None:
         run.status = RunStatus.ERROR
         run.error = str(exc)[:2000]
         run.finished_at = utcnow()
+        RUN_DURATION.labels(target="android", status="error").observe(
+            run_duration_seconds(run.started_at, run.finished_at)
+        )
         session.commit()
         publish(str(run_id), {"type": "run_done", "status": "error", "error": str(exc)[:500]})
     finally:

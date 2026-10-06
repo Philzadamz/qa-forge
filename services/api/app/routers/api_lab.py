@@ -7,14 +7,17 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
+from app.core import usage
 from app.core.audit import record as audit_record
 from app.core.config import get_settings
 from app.core.enums import CaseSection, CaseSource, Priority, TestStatus
 from app.core.rbac import require_project_access, require_user
+from app.core.ssrf import UnsafeUrlError, assert_public_http_url
 from app.db.session import get_db
 from app.models.project import Project
 from app.models.test_case import TestCase
 from app.models.test_suite import TestSuite
+from app.models.usage_record import UsageRecord
 from app.models.user import User
 from app.schemas.api_lab import EndpointCatalogue, GenerateApiCasesIn
 from app.schemas.suites import CaseOut
@@ -49,9 +52,11 @@ async def parse_api_spec(
     try:
         if kind == "openapi":
             if url:
-                if not url.startswith(("http://", "https://")):
-                    raise HTTPException(status.HTTP_400_BAD_REQUEST, "url must be http(s)")
-                resp = httpx.get(url, timeout=10.0, follow_redirects=True)
+                try:
+                    assert_public_http_url(url, allowed_hosts=get_settings().ssrf_allowed_hosts)
+                except UnsafeUrlError as exc:
+                    raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+                resp = httpx.get(url, timeout=10.0, follow_redirects=False)
                 resp.raise_for_status()
                 content = resp.text
             elif file is not None:
@@ -93,37 +98,50 @@ def generate_api_cases_endpoint(
     sort_order = db.query(TestCase).filter(TestCase.suite_id == suite.id).count()
 
     created: list[TestCase] = []
-    for endpoint in payload.endpoints:
-        drafts = generate_api_cases(
-            client,
-            endpoint=endpoint,
-            guidance=payload.guidance,
-            auth_header_template=payload.auth_header_template,
-            model=settings.ai_model_generation,
-        )
-        for draft in drafts:
-            case = TestCase(
-                suite_id=suite.id,
-                section=CaseSection.FUNCTIONAL,
-                case_no=0,
-                display_id="",
-                feature=draft.feature,
-                scenario=draft.scenario,
-                steps=draft.steps,
-                expected_result=draft.expected_result,
-                actual_result="",
-                status=TestStatus.NOT_TESTED,
-                evidence_group=draft.feature,
-                priority=Priority(draft.priority),
-                technique=[draft.category],
-                source=CaseSource.AI,
-                included=True,
-                sort_order=sort_order,
-                request_plan=draft.request_plan.model_dump(mode="json"),
+    with usage.track() as sink:
+        for endpoint in payload.endpoints:
+            drafts = generate_api_cases(
+                client,
+                endpoint=endpoint,
+                guidance=payload.guidance,
+                auth_header_template=payload.auth_header_template,
+                model=settings.ai_model_generation,
             )
-            db.add(case)
-            created.append(case)
-            sort_order += 1
+            for draft in drafts:
+                case = TestCase(
+                    suite_id=suite.id,
+                    section=CaseSection.FUNCTIONAL,
+                    case_no=0,
+                    display_id="",
+                    feature=draft.feature,
+                    scenario=draft.scenario,
+                    steps=draft.steps,
+                    expected_result=draft.expected_result,
+                    actual_result="",
+                    status=TestStatus.NOT_TESTED,
+                    evidence_group=draft.feature,
+                    priority=Priority(draft.priority),
+                    technique=[draft.category],
+                    source=CaseSource.AI,
+                    included=True,
+                    sort_order=sort_order,
+                    request_plan=draft.request_plan.model_dump(mode="json"),
+                )
+                db.add(case)
+                created.append(case)
+                sort_order += 1
+
+    if sink.events:
+        db.add(
+            UsageRecord(
+                actor_id=user.id,
+                feature="api_case_generation",
+                entity_id=str(suite.id),
+                model=settings.ai_model_generation,
+                prompt_tokens=sink.prompt_tokens,
+                completion_tokens=sink.completion_tokens,
+            )
+        )
 
     db.flush()
     renumber_suite_cases(db, suite.id, project.id_prefix)

@@ -18,6 +18,7 @@ import httpx
 from app.core.config import get_settings
 from app.core.crypto import decrypt_secret
 from app.core.enums import RunStatus, RunStepOutcome, TestStatus
+from app.core.metrics import RUN_DURATION, run_duration_seconds
 from app.db.base import utcnow
 from app.db.session import get_sessionmaker
 from app.models.evidence import Evidence
@@ -194,6 +195,9 @@ def run_api_execution_job(run_id: uuid.UUID) -> None:
         else:
             run.status = RunStatus.FAILED
         run.finished_at = utcnow()
+        RUN_DURATION.labels(target="api", status=run.status.value).observe(
+            run_duration_seconds(run.started_at, run.finished_at)
+        )
         run.summary_json = {"total": len(ordered_cases), **counts, "cases": results}
         session.commit()
         publish(str(run_id), {"type": "run_done", "status": run.status.value})
@@ -202,6 +206,9 @@ def run_api_execution_job(run_id: uuid.UUID) -> None:
         run.status = RunStatus.ERROR
         run.error = str(exc)[:2000]
         run.finished_at = utcnow()
+        RUN_DURATION.labels(target="api", status="error").observe(
+            run_duration_seconds(run.started_at, run.finished_at)
+        )
         session.commit()
         publish(str(run_id), {"type": "run_done", "status": "error", "error": str(exc)[:500]})
     finally:

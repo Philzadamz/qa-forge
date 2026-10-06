@@ -97,7 +97,7 @@ export function BugsPanel({ suiteId }: { suiteId: string }) {
                 <option value="Low">Low</option>
               </Select>
             </div>
-            <Button type="submit" disabled={isSubmitting} className="self-start">
+            <Button type="submit" loading={isSubmitting} className="self-start">
               {isSubmitting ? "Saving…" : "Create bug"}
             </Button>
           </form>

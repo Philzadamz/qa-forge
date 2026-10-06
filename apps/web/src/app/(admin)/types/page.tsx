@@ -90,7 +90,7 @@ export default function TypesPage() {
                 />
               </div>
               {formError && <p className="text-destructive text-sm">{formError}</p>}
-              <Button type="submit" disabled={isSubmitting} className="self-start">
+              <Button type="submit" loading={isSubmitting} className="self-start">
                 {isSubmitting ? "Creating…" : "Create type"}
               </Button>
             </form>

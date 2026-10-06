@@ -10,14 +10,19 @@ reconnects mid-run (or after it finished) can still read the outcome.
 import logging
 import uuid
 
+from sqlalchemy.orm import Session
+
+from app.core import usage
 from app.core.config import get_settings
 from app.core.enums import CaseSection, CaseSource, GenerationJobStatus, Priority, TestStatus
+from app.core.metrics import GENERATION_JOBS
 from app.db.base import utcnow
 from app.db.session import get_sessionmaker
 from app.models.generation_job import GenerationJob
 from app.models.project import Project
 from app.models.test_case import TestCase
 from app.models.test_suite import TestSuite
+from app.models.usage_record import UsageRecord
 from app.models.user_story import UserStory
 from app.services.ai.analyze import PROMPT_VERSION as ANALYZE_PROMPT_VERSION
 from app.services.ai.analyze import analyze_story
@@ -56,6 +61,29 @@ def _case_from_functional(
     )
 
 
+def _record_usage(session: Session, job: GenerationJob, sink: usage.Sink | None) -> None:
+    if sink is None or not sink.events:
+        return
+    settings = get_settings()
+    job.input_tokens = sink.prompt_tokens
+    job.output_tokens = sink.completion_tokens
+    job.cost_estimate = usage.estimate_cost(
+        prompt_tokens=sink.prompt_tokens,
+        completion_tokens=sink.completion_tokens,
+        cost_per_million_input=settings.ai_cost_per_million_input_tokens,
+        cost_per_million_output=settings.ai_cost_per_million_output_tokens,
+    )
+    session.add(
+        UsageRecord(
+            feature="story_generation",
+            entity_id=str(job.id),
+            model=settings.ai_model_generation,
+            prompt_tokens=sink.prompt_tokens,
+            completion_tokens=sink.completion_tokens,
+        )
+    )
+
+
 def run_generation_job(job_id: uuid.UUID) -> None:
     session = get_sessionmaker()()
     job = session.get(GenerationJob, job_id)
@@ -63,6 +91,7 @@ def run_generation_job(job_id: uuid.UUID) -> None:
         session.close()
         return
 
+    usage_sink: usage.Sink | None = None
     try:
         job.status = GenerationJobStatus.RUNNING
         job.started_at = utcnow()
@@ -83,77 +112,92 @@ def run_generation_job(job_id: uuid.UUID) -> None:
         settings = get_settings()
         client = build_llm_client(settings)
 
-        combined_text = "\n\n---\n\n".join(s.extracted_text for s in stories)
-        masked = mask_text(combined_text)
-        if masked.total_masked:
-            logger.info(
-                "Masked %s PII item(s) before sending story to the model", masked.total_masked
+        with usage.track() as sink:
+            usage_sink = sink
+            combined_text = "\n\n---\n\n".join(s.extracted_text for s in stories)
+            masked = mask_text(combined_text)
+            if masked.total_masked:
+                logger.info(
+                    "Masked %s PII item(s) before sending story to the model", masked.total_masked
+                )
+
+            analysis = analyze_story(
+                client, story_text=masked.text, model=settings.ai_model_generation
             )
-
-        analysis = analyze_story(client, story_text=masked.text, model=settings.ai_model_generation)
-        stories[0].analysis_json = analysis.model_dump(mode="json")
-        stories[0].acceptance_criteria = [
-            ac.model_dump(mode="json") for ac in analysis.acceptance_criteria
-        ]
-        session.commit()
-
-        default_summaries = [
-            c.scenario
-            for c in session.query(TestCase)
-            .filter(TestCase.suite_id == suite.id, TestCase.section == CaseSection.DEFAULT)
-            .all()
-        ]
-
-        config = GenerationConfig(model_generation=settings.ai_model_generation)
-        sort_order_counter = session.query(TestCase).filter(TestCase.suite_id == suite.id).count()
-
-        def on_feature_done(feature: str, cases: list[FunctionalCase]) -> None:
-            nonlocal sort_order_counter
-            for case in cases:
-                row = _case_from_functional(suite.id, case, sort_order_counter, is_duplicate=False)
-                session.add(row)
-                sort_order_counter += 1
+            stories[0].analysis_json = analysis.model_dump(mode="json")
+            stories[0].acceptance_criteria = [
+                ac.model_dump(mode="json") for ac in analysis.acceptance_criteria
+            ]
             session.commit()
-            publish(
-                str(job_id), {"type": "feature_done", "feature": feature, "case_count": len(cases)}
-            )
 
-        outcome = run_generation(
-            client,
-            analysis=analysis,
-            config=config,
-            default_scenario_summaries=default_summaries,
-            on_feature_done=on_feature_done,
-        )
-
-        # Mark duplicates found across the *whole* set (on_feature_done persisted rows before
-        # cross-feature dedup could see them) — flag by matching scenario text.
-        if outcome.duplicate_indexes:
-            duplicate_scenarios = {outcome.cases[i].scenario for i in outcome.duplicate_indexes}
-            rows = (
-                session.query(TestCase)
-                .filter(TestCase.suite_id == suite.id, TestCase.source == CaseSource.AI)
+            default_summaries = [
+                c.scenario
+                for c in session.query(TestCase)
+                .filter(TestCase.suite_id == suite.id, TestCase.section == CaseSection.DEFAULT)
                 .all()
+            ]
+
+            config = GenerationConfig(model_generation=settings.ai_model_generation)
+            sort_order_counter = (
+                session.query(TestCase).filter(TestCase.suite_id == suite.id).count()
             )
-            for row in rows:
-                if row.scenario in duplicate_scenarios:
-                    row.is_duplicate = True
-                    row.included = False
-            session.commit()
+
+            def on_feature_done(feature: str, cases: list[FunctionalCase]) -> None:
+                nonlocal sort_order_counter
+                for case in cases:
+                    row = _case_from_functional(
+                        suite.id, case, sort_order_counter, is_duplicate=False
+                    )
+                    session.add(row)
+                    sort_order_counter += 1
+                session.commit()
+                publish(
+                    str(job_id),
+                    {"type": "feature_done", "feature": feature, "case_count": len(cases)},
+                )
+
+            outcome = run_generation(
+                client,
+                analysis=analysis,
+                config=config,
+                default_scenario_summaries=default_summaries,
+                on_feature_done=on_feature_done,
+            )
+
+            # Mark duplicates found across the *whole* set (on_feature_done persisted rows
+            # before cross-feature dedup could see them) — flag by matching scenario text.
+            if outcome.duplicate_indexes:
+                duplicate_scenarios = {outcome.cases[i].scenario for i in outcome.duplicate_indexes}
+                rows = (
+                    session.query(TestCase)
+                    .filter(TestCase.suite_id == suite.id, TestCase.source == CaseSource.AI)
+                    .all()
+                )
+                for row in rows:
+                    if row.scenario in duplicate_scenarios:
+                        row.is_duplicate = True
+                        row.included = False
+                session.commit()
+
+        _record_usage(session, job, usage_sink)
+        usage_sink = None
 
         renumber_suite_cases(session, suite.id, project.id_prefix)
         session.commit()
 
         job.status = GenerationJobStatus.SUCCEEDED
         job.finished_at = utcnow()
+        GENERATION_JOBS.labels(status="succeeded").inc()
         job.prompt_version = ANALYZE_PROMPT_VERSION
         session.commit()
         publish(str(job_id), {"type": "job_done", "status": "succeeded"})
     except Exception as exc:
         logger.exception("Generation job %s failed", job_id)
+        _record_usage(session, job, usage_sink)
         job.status = GenerationJobStatus.FAILED
         job.error = str(exc)[:2000]
         job.finished_at = utcnow()
+        GENERATION_JOBS.labels(status="failed").inc()
         session.commit()
         publish(str(job_id), {"type": "job_done", "status": "failed", "error": str(exc)[:500]})
     finally:

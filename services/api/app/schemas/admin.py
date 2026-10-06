@@ -185,3 +185,16 @@ class UserOut(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class AuditLogOut(BaseModel):
+    id: uuid.UUID
+    actor_id: uuid.UUID | None
+    action: str
+    entity: str
+    entity_id: str | None
+    diff: dict[str, object]
+    ip: str | None
+    at: datetime
+
+    model_config = {"from_attributes": True}

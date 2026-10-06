@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 
+import { BackButton } from "@/components/back-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -77,6 +78,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
 
   return (
     <div className="flex flex-col gap-6">
+      <BackButton fallbackHref="/projects" />
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{project.name}</h1>
@@ -127,7 +129,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
                 <Textarea id="text" rows={8} {...register("text")} aria-invalid={!!errors.text} />
                 {errors.text && <p className="text-destructive text-sm">{errors.text.message}</p>}
               </div>
-              <Button type="submit" disabled={isSubmitting} className="self-start">
+              <Button type="submit" loading={isSubmitting} className="self-start">
                 {isSubmitting ? "Saving…" : "Save story"}
               </Button>
             </form>

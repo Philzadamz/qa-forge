@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
+import { BackButton } from "@/components/back-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,6 +13,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { API_PREFIX, ApiError, apiFetch } from "@/lib/api";
 import type { Report, ReportFields } from "@/lib/types/workspace";
+
+import { SignatureField } from "./signature-field";
 
 function describeError(err: unknown, fallback: string): string {
   if (err instanceof ApiError) return err.problem.detail ?? err.message;
@@ -87,6 +90,10 @@ export function ReportDetailClient({ reportId }: { reportId: string }) {
 
   return (
     <div className="flex flex-col gap-6">
+      <BackButton
+        fallbackHref={report ? `/suites/${report.suite_id}` : "/dashboard"}
+        label="Back to suite"
+      />
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">QA Test Completion Report</h1>
@@ -95,7 +102,7 @@ export function ReportDetailClient({ reportId }: { reportId: string }) {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => save.mutate(fields)} disabled={save.isPending}>
+          <Button variant="outline" onClick={() => save.mutate(fields)} loading={save.isPending}>
             {save.isPending ? "Saving…" : "Save draft"}
           </Button>
           <Button onClick={handleDownload}>Download .docx</Button>
@@ -192,8 +199,24 @@ export function ReportDetailClient({ reportId }: { reportId: string }) {
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           {fields.features.map((f, i) => (
-            <div key={f.name} className="rounded-md border p-3">
-              <div className="font-medium">{f.name}</div>
+            <div key={`${f.name}-${i}`} className="rounded-md border p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="font-medium">{f.name}</div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-destructive hover:text-destructive"
+                  aria-label={`Remove feature ${f.name}`}
+                  onClick={() =>
+                    update(
+                      "features",
+                      fields.features.filter((_, j) => j !== i),
+                    )
+                  }
+                >
+                  Remove
+                </Button>
+              </div>
               <Textarea
                 rows={2}
                 className="mt-1"
@@ -259,17 +282,33 @@ export function ReportDetailClient({ reportId }: { reportId: string }) {
           <div className="grid grid-cols-3 gap-3 text-sm md:grid-cols-6">
             {(
               [
-                ["Cycles", fields.result_analysis.test_cycles],
-                ["Total", fields.result_analysis.total],
-                ["Passed", fields.result_analysis.passed],
-                ["Failed", fields.result_analysis.failed],
-                ["Un-executed", fields.result_analysis.unexecuted],
-                ["Suspended", fields.result_analysis.suspended],
+                ["Cycles", "test_cycles"],
+                ["Total", "total"],
+                ["Passed", "passed"],
+                ["Failed", "failed"],
+                ["Un-executed", "unexecuted"],
+                ["Suspended", "suspended"],
               ] as const
-            ).map(([label, value]) => (
-              <div key={label} className="rounded-md border p-2 text-center">
-                <div className="text-muted-foreground text-xs">{label}</div>
-                <div className="text-lg font-semibold">{value}</div>
+            ).map(([label, key]) => (
+              <div key={key} className="flex flex-col gap-1 rounded-md border p-2">
+                <Label htmlFor={`ra-${key}`} className="text-muted-foreground text-xs font-normal">
+                  {label}
+                </Label>
+                <Input
+                  id={`ra-${key}`}
+                  type="number"
+                  min={0}
+                  inputMode="numeric"
+                  className="h-8 text-center text-base font-semibold"
+                  value={fields.result_analysis[key]}
+                  onChange={(e) => {
+                    update("result_analysis", {
+                      ...fields.result_analysis,
+                      [key]: Math.max(0, Number(e.target.value) || 0),
+                    });
+                    update("ra_overridden", true);
+                  }}
+                />
               </div>
             ))}
           </div>
@@ -278,23 +317,38 @@ export function ReportDetailClient({ reportId }: { reportId: string }) {
             <span className="font-medium">{fields.automation_ratio}</span>
           </div>
           <div className="grid grid-cols-3 gap-3 text-sm">
-            <div className="rounded-md border p-2 text-center">
-              <div className="text-muted-foreground text-xs">Bugs raised</div>
-              <div className="text-lg font-semibold">{fields.bugs.raised}</div>
-            </div>
-            <div className="rounded-md border p-2 text-center">
-              <div className="text-muted-foreground text-xs">Fixed &amp; retested</div>
-              <div className="text-lg font-semibold">{fields.bugs.fixed_retested}</div>
-            </div>
-            <div className="rounded-md border p-2 text-center">
-              <div className="text-muted-foreground text-xs">Open</div>
-              <div className="text-lg font-semibold">{fields.bugs.open}</div>
-            </div>
+            {(
+              [
+                ["Bugs raised", "raised"],
+                ["Fixed & retested", "fixed_retested"],
+                ["Open", "open"],
+              ] as const
+            ).map(([label, key]) => (
+              <div key={key} className="flex flex-col gap-1 rounded-md border p-2">
+                <Label htmlFor={`bug-${key}`} className="text-muted-foreground text-xs font-normal">
+                  {label}
+                </Label>
+                <Input
+                  id={`bug-${key}`}
+                  type="number"
+                  min={0}
+                  inputMode="numeric"
+                  className="h-8 text-center text-base font-semibold"
+                  value={fields.bugs[key]}
+                  onChange={(e) =>
+                    update("bugs", {
+                      ...fields.bugs,
+                      [key]: Math.max(0, Number(e.target.value) || 0),
+                    })
+                  }
+                />
+              </div>
+            ))}
           </div>
           {!fields.ra_overridden && (
             <p className="text-muted-foreground text-xs">
-              These numbers are computed from the suite&apos;s current results. If the suite changes
-              after this draft, downloading will be blocked until you re-draft or override below.
+              These numbers are computed from the suite&apos;s current results. Editing any of them
+              marks the report as overridden, and the reason below is then required.
             </p>
           )}
           <label className="flex items-center gap-2 text-sm">
@@ -306,7 +360,7 @@ export function ReportDetailClient({ reportId }: { reportId: string }) {
           </label>
           {fields.ra_overridden && (
             <Input
-              placeholder="Reason for overriding (required)"
+              placeholder="Reason for changing these numbers (required)"
               value={fields.ra_override_reason ?? ""}
               onChange={(e) => update("ra_override_reason", e.target.value)}
             />
@@ -381,11 +435,12 @@ export function ReportDetailClient({ reportId }: { reportId: string }) {
           {fields.approvals.map((a, i) => (
             <div
               key={a.action}
-              className="grid grid-cols-1 gap-2 rounded-md border p-3 md:grid-cols-4"
+              className="grid grid-cols-1 items-start gap-3 rounded-md border p-3 md:grid-cols-[1fr_1fr_1fr_1.2fr]"
             >
               <div className="text-sm font-medium md:col-span-4">{a.action}</div>
               <Input
                 placeholder="Name"
+                aria-label={`${a.action} name`}
                 value={a.name}
                 onChange={(e) => {
                   const next = [...fields.approvals];
@@ -395,6 +450,7 @@ export function ReportDetailClient({ reportId }: { reportId: string }) {
               />
               <Input
                 placeholder="Staff ID"
+                aria-label={`${a.action} staff ID`}
                 value={a.staff_id}
                 onChange={(e) => {
                   const next = [...fields.approvals];
@@ -404,10 +460,21 @@ export function ReportDetailClient({ reportId }: { reportId: string }) {
               />
               <Input
                 placeholder="DD/MM/YYYY"
+                aria-label={`${a.action} date`}
                 value={a.date}
                 onChange={(e) => {
                   const next = [...fields.approvals];
                   next[i] = { ...a, date: e.target.value };
+                  update("approvals", next);
+                }}
+              />
+              <SignatureField
+                reportId={reportId}
+                index={i}
+                signatureKey={a.signature_key}
+                onChanged={(key) => {
+                  const next = [...fields.approvals];
+                  next[i] = { ...a, signature_key: key };
                   update("approvals", next);
                 }}
               />

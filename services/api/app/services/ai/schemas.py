@@ -75,21 +75,11 @@ class FeatureDescriptionDraft(BaseModel):
     description: str
 
 
-class ExceptionDraft(BaseModel):
-    case_id: str
-    status_type: str
-    description: str
-    severity: Literal["Critical", "High", "Medium", "Low"]
-    risk: str
-
-
-class ReportDraft(BaseModel):
-    """PRD §8.3: one call drafts the feature descriptions, exceptions, and comments — the
-    numbers (Result Analysis, bugs summary) are computed deterministically, not by the model."""
+class FeatureDescriptionsDraft(BaseModel):
+    """PRD §8.3: the report's only AI-written section. Exceptions and comments are left to the
+    QA (the report must read cleanly even when no Test Lab run was done)."""
 
     feature_descriptions: list[FeatureDescriptionDraft] = Field(default_factory=list)
-    exceptions: list[ExceptionDraft] = Field(default_factory=list)
-    comments: list[str] = Field(default_factory=list)
 
 
 class ExecutionResult(BaseModel):

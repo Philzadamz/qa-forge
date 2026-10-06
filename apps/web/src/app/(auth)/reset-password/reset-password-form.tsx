@@ -8,7 +8,7 @@ import { useForm } from "react-hook-form";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { ApiError, apiFetch } from "@/lib/api";
 import { resetPasswordSchema, type ResetPasswordInput } from "@/lib/schemas/auth";
@@ -69,9 +69,9 @@ export function ResetPasswordForm({ token }: { token: string | null }) {
         <form onSubmit={handleSubmit(onSubmit)} noValidate className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
             <Label htmlFor="password">New password</Label>
-            <Input
+            <PasswordInput
               id="password"
-              type="password"
+
               autoComplete="new-password"
               aria-invalid={!!errors.password}
               aria-describedby={errors.password ? "password-error" : undefined}
@@ -85,9 +85,9 @@ export function ResetPasswordForm({ token }: { token: string | null }) {
           </div>
           <div className="flex flex-col gap-2">
             <Label htmlFor="confirmPassword">Confirm new password</Label>
-            <Input
+            <PasswordInput
               id="confirmPassword"
-              type="password"
+
               autoComplete="new-password"
               aria-invalid={!!errors.confirmPassword}
               aria-describedby={errors.confirmPassword ? "confirm-password-error" : undefined}
@@ -104,7 +104,7 @@ export function ResetPasswordForm({ token }: { token: string | null }) {
               {formError}
             </p>
           )}
-          <Button type="submit" disabled={isSubmitting}>
+          <Button type="submit" loading={isSubmitting}>
             {isSubmitting ? "Saving…" : "Save new password"}
           </Button>
           <Link href="/login" className="text-primary text-center text-sm hover:underline">

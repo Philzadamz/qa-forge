@@ -16,6 +16,7 @@ from app.models.user import User
 @pytest.fixture(autouse=True)
 def _isolated_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setenv("ENVIRONMENT", "test")
+    monkeypatch.setenv("AI_PROVIDER", "fake")
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{(tmp_path / 'test.db').as_posix()}")
     monkeypatch.setenv("STORAGE_LOCAL_ROOT", str(tmp_path / "storage"))
     monkeypatch.setenv("JWT_SECRET", "test-secret-key-at-least-32-bytes-long")

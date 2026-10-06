@@ -62,7 +62,7 @@ export function ForgotPasswordForm() {
                 </p>
               )}
             </div>
-            <Button type="submit" disabled={isSubmitting}>
+            <Button type="submit" loading={isSubmitting}>
               {isSubmitting ? "Sending…" : "Send reset link"}
             </Button>
             <Link href="/login" className="text-primary text-center text-sm hover:underline">

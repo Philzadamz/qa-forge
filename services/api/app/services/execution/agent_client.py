@@ -15,7 +15,10 @@ import json
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from app.core import usage
 from app.core.config import Settings
+
+LLM_TIMEOUT_SECONDS = 120.0
 
 
 class AgentClientError(RuntimeError):
@@ -53,7 +56,9 @@ class OpenAICompatibleAgentClient:
     def __init__(self, *, api_key: str, base_url: str) -> None:
         from openai import OpenAI
 
-        self._client = OpenAI(api_key=api_key, base_url=base_url)
+        self._client = OpenAI(
+            api_key=api_key, base_url=base_url, timeout=LLM_TIMEOUT_SECONDS, max_retries=1
+        )
 
     def next_turn(
         self,
@@ -77,6 +82,12 @@ class OpenAICompatibleAgentClient:
             )
         except APIError as exc:
             raise AgentClientError(f"Agent LLM request failed: {exc}") from exc
+        if response.usage is not None:
+            usage.record(
+                model=model,
+                prompt_tokens=response.usage.prompt_tokens,
+                completion_tokens=response.usage.completion_tokens,
+            )
         choice = response.choices[0].message
         calls = [
             ToolCall(
@@ -117,6 +128,15 @@ def build_agent_client(settings: Settings) -> AgentClient:
             raise AgentClientError("DEEPSEEK_API_KEY is not configured")
         return OpenAICompatibleAgentClient(
             api_key=settings.deepseek_api_key, base_url=settings.deepseek_base_url
+        )
+    if settings.ai_provider == "openai_compatible":
+        if not settings.openai_compatible_api_key or not settings.openai_compatible_base_url:
+            raise AgentClientError(
+                "OPENAI_COMPATIBLE_API_KEY and OPENAI_COMPATIBLE_BASE_URL are required"
+            )
+        return OpenAICompatibleAgentClient(
+            api_key=settings.openai_compatible_api_key,
+            base_url=settings.openai_compatible_base_url,
         )
     if settings.ai_provider == "anthropic":
         raise AgentClientError("Agent mode against Anthropic isn't implemented yet")

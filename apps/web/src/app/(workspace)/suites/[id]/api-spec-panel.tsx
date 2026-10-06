@@ -140,7 +140,7 @@ export function ApiSpecPanel({ suiteId }: { suiteId: string }) {
         size="sm"
         className="self-start"
         onClick={() => parseSpec.mutate()}
-        disabled={parseSpec.isPending}
+        loading={parseSpec.isPending}
       >
         {parseSpec.isPending ? "Parsing…" : "Parse endpoints"}
       </Button>
@@ -178,6 +178,7 @@ export function ApiSpecPanel({ suiteId }: { suiteId: string }) {
           <Button
             onClick={() => generateCases.mutate()}
             disabled={selected.size === 0 || generateCases.isPending}
+            loading={generateCases.isPending}
             className="self-start"
           >
             {generateCases.isPending

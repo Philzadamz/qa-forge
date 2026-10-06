@@ -14,6 +14,7 @@ from app.core.audit import record as audit_record
 from app.core.config import get_settings
 from app.core.enums import CaseSection, CaseSource, EvidenceKind, TemplateKind, TemplateStatus
 from app.core.rbac import require_project_access, require_user
+from app.core.uploads import sniff_image
 from app.db.session import get_db
 from app.models.evidence import Evidence
 from app.models.project import Project
@@ -31,7 +32,6 @@ from app.services.suites.numbering import renumber_suite_cases
 router = APIRouter(tags=["cases"])
 
 MAX_EVIDENCE_BYTES = 10 * 1024 * 1024
-ALLOWED_EVIDENCE_CONTENT_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 
 
 def _get_project_or_404(db: Session, project_id: uuid.UUID, user: User) -> Project:
@@ -226,22 +226,19 @@ async def upload_evidence(
     user: User = Depends(require_user),
 ) -> Evidence:
     case, _, _ = _get_case_or_404(db, case_id, user)
-    if file.content_type not in ALLOWED_EVIDENCE_CONTENT_TYPES:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            f"Unsupported evidence type '{file.content_type}'. Use PNG, JPEG, GIF, or WebP.",
-        )
     raw = await file.read()
     if len(raw) > MAX_EVIDENCE_BYTES:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Evidence file is too large (max 10 MB)")
+    sniffed = sniff_image(raw)
+    if sniffed is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Unsupported evidence file. Upload a PNG, JPEG, GIF, or WebP image.",
+        )
+    _, extension = sniffed
 
     max_sort = db.query(Evidence).filter(Evidence.test_case_id == case_id).count()
     evidence_id = uuid.uuid4()
-    extension = (
-        (file.filename or "png").rsplit(".", 1)[-1].lower()
-        if "." in (file.filename or "")
-        else "png"
-    )
     key = f"evidence/{case.suite_id}/{case_id}/{evidence_id}.{extension}"
     build_storage(get_settings()).put(key, raw)
 

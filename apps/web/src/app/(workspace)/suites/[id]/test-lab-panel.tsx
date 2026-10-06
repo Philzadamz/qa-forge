@@ -150,6 +150,7 @@ export function TestLabPanel({
         <Button
           onClick={() => startRun.mutate()}
           disabled={!canStart || startRun.isPending}
+          loading={startRun.isPending}
           className="self-start"
         >
           {startRun.isPending ? "Starting…" : "Start Test Lab Run"}

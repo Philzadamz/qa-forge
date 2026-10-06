@@ -95,7 +95,7 @@ export function DefaultCaseForm({
         )}
       </div>
       <div className="flex gap-2 md:col-span-2">
-        <Button type="submit" disabled={isSubmitting}>
+        <Button type="submit" loading={isSubmitting}>
           {isSubmitting ? "Saving…" : submitLabel}
         </Button>
         {onCancel && (

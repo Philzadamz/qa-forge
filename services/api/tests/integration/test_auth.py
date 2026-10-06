@@ -157,3 +157,36 @@ def test_full_reset_password_flow(client: TestClient, db_session: Session) -> No
         "/api/v1/auth/reset-password", json={"token": token, "password": "another-password-1"}
     )
     assert reused.status_code == 400
+
+
+def test_successful_password_reset_is_audited(client: TestClient, db_session: Session) -> None:
+    from app.models.audit_log import AuditLog
+
+    user = make_user(db_session, email="audited@example.com", password="old-password-1")
+    import logging
+
+    captured: list[str] = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            captured.append(record.getMessage())
+
+    handler = _Capture()
+    logging.getLogger("app.routers.auth").addHandler(handler)
+    try:
+        client.post("/api/v1/auth/forgot-password", json={"email": "audited@example.com"})
+    finally:
+        logging.getLogger("app.routers.auth").removeHandler(handler)
+    token = captured[-1].split("token=")[-1]
+
+    resp = client.post(
+        "/api/v1/auth/reset-password", json={"token": token, "password": "new-password-1"}
+    )
+    assert resp.status_code == 204
+
+    entry = (
+        db_session.query(AuditLog)
+        .filter(AuditLog.action == "password_reset", AuditLog.entity_id == str(user.id))
+        .one()
+    )
+    assert entry.actor_id == user.id

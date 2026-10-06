@@ -145,7 +145,7 @@ export interface ApprovalRow {
   action: string;
   name: string;
   staff_id: string;
-  signature: string;
+  signature_key: string | null;
   date: string;
 }
 

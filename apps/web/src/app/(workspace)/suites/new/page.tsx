@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { useForm } from "react-hook-form";
 
+import { BackButton } from "@/components/back-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -74,6 +75,7 @@ function NewSuiteForm() {
 
   return (
     <div className="flex flex-col gap-6">
+      <BackButton fallbackHref="/projects" />
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Generate Test Cases</h1>
         <p className="text-muted-foreground text-sm">

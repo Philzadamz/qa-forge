@@ -6,7 +6,7 @@ WEB_DIR := apps/web
 UV := uv --directory $(API_DIR)
 
 .PHONY: help install dev dev-api dev-web demo-target demo-api migrate test test-api test-web lint lint-api lint-web \
-        format typecheck up down seed-admin seed-defaults seed-report-defaults
+        format typecheck up down seed-admin seed-defaults seed-report-defaults retention-sweep
 
 help:
 	@echo "install     Install API (uv) and web (npm) dependencies"
@@ -17,6 +17,7 @@ help:
 	@echo "up / down   Start / stop the full Docker Compose stack"
 	@echo "seed-admin EMAIL=... PASSWORD=...   Create the first admin user"
 	@echo "seed-defaults                        Import the 31 default scenarios from the team template"
+	@echo "retention-sweep  Purge evidence/upload files past retention and prune the audit log"
 
 install:
 	$(UV) sync
@@ -77,3 +78,6 @@ seed-defaults:
 
 seed-report-defaults:
 	$(UV) run python -m app.cli seed-report-defaults
+
+retention-sweep:
+	$(UV) run python -m app.cli retention-sweep

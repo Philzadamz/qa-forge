@@ -9,7 +9,10 @@ with the `openai` SDK pointed at DeepSeek's base URL rather than a bespoke HTTP 
 
 from typing import Protocol
 
+from app.core import usage
 from app.core.config import Settings
+
+LLM_TIMEOUT_SECONDS = 120.0
 
 
 class LLMError(RuntimeError):
@@ -30,7 +33,9 @@ class OpenAICompatibleClient:
     def __init__(self, *, api_key: str, base_url: str) -> None:
         from openai import OpenAI
 
-        self._client = OpenAI(api_key=api_key, base_url=base_url)
+        self._client = OpenAI(
+            api_key=api_key, base_url=base_url, timeout=LLM_TIMEOUT_SECONDS, max_retries=1
+        )
 
     def complete_json(
         self, *, system: str, user: str, model: str, temperature: float, max_tokens: int
@@ -50,6 +55,12 @@ class OpenAICompatibleClient:
             )
         except APIError as exc:
             raise LLMError(f"LLM request failed: {exc}") from exc
+        if response.usage is not None:
+            usage.record(
+                model=model,
+                prompt_tokens=response.usage.prompt_tokens,
+                completion_tokens=response.usage.completion_tokens,
+            )
         content = response.choices[0].message.content
         if not content:
             raise LLMError("Empty response from model")
@@ -82,6 +93,11 @@ class AnthropicClient:
             )
         except anthropic.APIError as exc:
             raise LLMError(f"LLM request failed: {exc}") from exc
+        usage.record(
+            model=model,
+            prompt_tokens=response.usage.input_tokens,
+            completion_tokens=response.usage.output_tokens,
+        )
         parts = [block.text for block in response.content if block.type == "text"]
         if not parts:
             raise LLMError("Empty response from model")
@@ -114,6 +130,13 @@ def build_llm_client(settings: Settings) -> LLMClient:
             raise LLMError("DEEPSEEK_API_KEY is not configured")
         return OpenAICompatibleClient(
             api_key=settings.deepseek_api_key, base_url=settings.deepseek_base_url
+        )
+    if settings.ai_provider == "openai_compatible":
+        if not settings.openai_compatible_api_key or not settings.openai_compatible_base_url:
+            raise LLMError("OPENAI_COMPATIBLE_API_KEY and OPENAI_COMPATIBLE_BASE_URL are required")
+        return OpenAICompatibleClient(
+            api_key=settings.openai_compatible_api_key,
+            base_url=settings.openai_compatible_base_url,
         )
     if settings.ai_provider == "anthropic":
         if not settings.anthropic_api_key:

@@ -12,8 +12,6 @@ DRAFT_JSON = json.dumps(
         "feature_descriptions": [
             {"name": "Login", "description": "To confirm that users can log in."}
         ],
-        "exceptions": [],
-        "comments": ["Testing completed successfully."],
     }
 )
 
@@ -83,8 +81,23 @@ def test_draft_report_survives_ai_failure(
 
     resp = admin_client.post(f"/api/v1/suites/{suite['id']}/reports/draft")
     assert resp.status_code == 201, resp.text
-    comments = resp.json()["fields_json"]["comments"]
-    assert any("AI draft unavailable" in c for c in comments)
+    fields = resp.json()["fields_json"]
+    assert fields["comments"] == []
+
+
+def test_draft_uses_default_approval_roles_when_none_configured(
+    admin_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.core.report_defaults import DEFAULT_APPROVAL_ROLES
+
+    suite = _create_suite_all_passed(admin_client)
+    monkeypatch.setattr(
+        "app.routers.reports.build_llm_client", lambda settings: FakeLLMClient(responses=["x"])
+    )
+    resp = admin_client.post(f"/api/v1/suites/{suite['id']}/reports/draft")
+    assert resp.status_code == 201, resp.text
+    actions = [a["action"] for a in resp.json()["fields_json"]["approvals"]]
+    assert actions == [r["action"] for r in DEFAULT_APPROVAL_ROLES]
 
 
 def test_second_draft_increments_version(
@@ -180,3 +193,33 @@ def test_render_with_override_bypasses_consistency_check(
 
     render_resp = admin_client.post(f"/api/v1/reports/{report['id']}/render")
     assert render_resp.status_code == 200, render_resp.text
+
+
+def test_draft_lists_no_failed_cases_and_leaves_comments_empty(
+    admin_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    suite = _create_suite_all_passed(admin_client)
+    cases = admin_client.get(f"/api/v1/suites/{suite['id']}/cases").json()
+    admin_client.post(
+        f"/api/v1/suites/{suite['id']}/cases/bulk",
+        json={"case_ids": [c["id"] for c in cases], "status": "Failed"},
+    )
+    monkeypatch.setattr(
+        "app.routers.reports.build_llm_client",
+        lambda settings: FakeLLMClient(responses=[DRAFT_JSON]),
+    )
+
+    resp = admin_client.post(f"/api/v1/suites/{suite['id']}/reports/draft")
+    assert resp.status_code == 201, resp.text
+    fields = resp.json()["fields_json"]
+    assert fields["exceptions"] == [
+        {
+            "case_id": "N/A",
+            "status_type": "N/A",
+            "description": "N/A",
+            "severity": "N/A",
+            "risk": "N/A",
+        }
+    ]
+    assert fields["comments"] == []
+    assert fields["result_analysis"]["failed"] == len(cases)

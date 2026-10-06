@@ -553,3 +553,75 @@ evidence; crash detection; provider interface for remote device farms).
 **Next**
 Phase 8 — Hardening (security checklist per PRD §12, complete audit log, usage dashboard,
 retention jobs, measured performance targets, user & admin guide in `docs/`).
+
+## Phase 8 — Hardening (2026-10-04)
+
+**Built**
+- Token usage: `app/core/usage.py` (a ContextVar sink) captures real token counts from both
+  OpenAI-compatible clients. Story generation, report drafting, API case generation, and both
+  agent-driven Test Lab runners persist a `usage_records` row. `GenerationJob`'s
+  `input_tokens` / `output_tokens` / `cost_estimate` columns, which existed since Phase 3 but were
+  never written, are now populated. Decision: docs/decisions/010.
+- Usage dashboard: `GET /dashboard` (scoped to visible projects) and the Dashboard page, replacing
+  the Phase 0 placeholder. Shows projects, suites, 30-day runs and pass rate, recent runs, and
+  token use by feature.
+- Audit log: `GET /admin/audit-log` (filters: action, entity, actor, since) and an Admin
+  Console → Audit Log page. Password resets are now audited; they weren't before.
+- Retention: `python -m app.cli retention-sweep` / `make retention-sweep` (cron). Evidence and
+  raw uploads past 180 days, audit rows past 730 days. Deleting a project now purges its storage
+  objects immediately, as PRD §12 requires. `app/services/retention.py`.
+- Upload sniffing: evidence images are identified from magic bytes, and the stored extension
+  comes from that, not the client's filename or declared Content-Type.
+- SSRF guard (`app/core/ssrf.py`, docs/decisions/009): the OpenAPI URL import refuses loopback,
+  private, link-local, and metadata addresses, and doesn't follow redirects. `SSRF_ALLOWED_HOSTS`
+  is an explicit operator allowlist.
+- Observability: `GET /metrics` (Prometheus) with AI tokens by model/direction, generation jobs
+  by outcome, and run durations by target/status.
+- CI: `pip-audit` on Python runtime dependencies (blocking); `npm audit` on web (informational,
+  see open items).
+- Performance measured: `services/api/scripts/measure_targets.py`, results in docs/performance.md.
+  Defaults render 3 ms, xlsx export of 300 cases 692 ms, docx render 139 ms — all inside target.
+- Docs: `docs/user-guide.md`, `docs/admin-guide.md`, decisions 009 and 010.
+
+**Real bugs caught by testing against the running app, not by reading the code:**
+1. Dashboard returned 500 on any run. SQLite returns naive datetimes; comparing them with the
+   aware window start raised. Found in the browser, and the test suite had missed it because no
+   test created a run. Fixed, and a test now covers a real run in the window.
+2. The same naive/aware mismatch would have marked every finished Test Lab run as `error`, since
+   the duration metric subtracts those timestamps and the exception lands in the runner's error
+   path. Caught while wiring the metric; `run_duration_seconds` normalizes both sides and is
+   unit-tested.
+3. The OpenAPI URL import was an SSRF hole. Caught by reviewing the endpoint against the PRD
+   checklist. The first fix broke the live API-spec test, because it fetches the local demo API.
+   Resolved with an explicit allowlist in the test, not by loosening the guard.
+4. `GenerationJob` token columns existed but were never written.
+5. Retention deletes would have hit a foreign-key error on `RunStep.screenshot_evidence_id`, which
+   has no `ON DELETE`. Handled by nulling the reference first.
+6. A bulk `UPDATE` with `synchronize_session=False` left stale ORM objects in the session; changed
+   to `"fetch"`.
+
+**Verified**
+- Backend: 445 passed, 1 skipped (up from 402 at the start of Phase 8). Lint, format, and mypy clean.
+- Frontend: lint, format, typecheck, 10 unit tests, production build all pass.
+- Browser (real dev server, Playwright): dashboard renders real run data with no console errors;
+  audit log lists entries and the action filter works.
+- Alembic: `usage_records` migration applied; `alembic check` shows no drift.
+
+**Open — needs a decision or more work**
+- **Next.js advisories:** `npm audit` reports a high and a moderate `postcss` finding under
+  `next` 15.5.27. The only fix is a Next 16 major upgrade. CI's npm step is informational until
+  that's scheduled (docs/decisions/010).
+- **Viewer role is unusable:** `require_user` admits only admin and user, so viewers get 403 on
+  every workspace endpoint. A read-only mode needs a product decision first.
+- **Concurrency caps not enforced:** the PRD's 3 web runs / 1–2 Android runs per host aren't
+  enforced in code.
+- **Not measured:** story-generation latency (needs a live DeepSeek key) and concurrency under
+  load.
+- **Flaky live test:** `test_android_tools_live.py::test_tap_navigates_and_back_returns` failed
+  once in a full-suite run and passed on immediate rerun, in isolation, and on a later full run.
+  Not root-caused. Likely Appium/UI timing under load; worth a follow-up.
+- **DNS rebinding:** the SSRF guard checks the resolved address and then reconnects. A hostile
+  resolver could bypass it. Documented in docs/decisions/009; pinning the validated IP is the fix.
+- **No key-rotation tool:** changing `SECRETS_KEY` makes existing secrets unreadable. Documented
+  in the admin guide, not automated.
+- **Not committed.** Phase 8 changes are in the working tree.

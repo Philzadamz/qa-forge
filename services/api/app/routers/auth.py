@@ -114,7 +114,9 @@ def forgot_password(
 
 
 @router.post("/reset-password", status_code=status.HTTP_204_NO_CONTENT)
-def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db)) -> None:
+def reset_password(
+    payload: ResetPasswordRequest, request: Request, db: Session = Depends(get_db)
+) -> None:
     token_hash = hashlib.sha256(payload.token.encode()).hexdigest()
     reset_token = (
         db.query(PasswordResetToken)
@@ -135,4 +137,12 @@ def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db))
 
     user.password_hash = hash_password(payload.password)
     reset_token.used_at = now
+    audit_record(
+        db,
+        actor_id=user.id,
+        action="password_reset",
+        entity="user",
+        entity_id=str(user.id),
+        request=request,
+    )
     db.commit()

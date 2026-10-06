@@ -8,11 +8,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.core.audit import record as audit_record
+from app.core.config import get_settings
 from app.core.rbac import require_project_access, require_user
 from app.db.session import get_db
 from app.models.project import Project
 from app.models.user import User
 from app.schemas.projects import ProjectIn, ProjectOut, ProjectPatch
+from app.services.retention import purge_project_storage
+from app.services.storage import build_storage
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -118,6 +121,8 @@ def delete_project(
 ) -> None:
     obj = _get_project_or_404(db, project_id)
     require_project_access(obj, user)
+    storage = build_storage(get_settings())
+    purge_counts = purge_project_storage(db, storage, project_id)
     obj.deleted_at = datetime.now(UTC)
     audit_record(
         db,
@@ -125,6 +130,12 @@ def delete_project(
         action="delete",
         entity="project",
         entity_id=str(project_id),
+        diff={
+            "purged_evidence": purge_counts.evidence,
+            "purged_stories": purge_counts.stories,
+            "purged_reports": purge_counts.reports,
+            "purged_apks": purge_counts.apks,
+        },
         request=request,
     )
     db.commit()

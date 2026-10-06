@@ -45,7 +45,7 @@ class ApprovalRowIn(BaseModel):
     action: str
     name: str = ""
     staff_id: str = ""
-    signature: str = ""
+    signature_key: str | None = None
     date: str = ""
 
 

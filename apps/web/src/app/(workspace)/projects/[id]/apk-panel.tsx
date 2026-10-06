@@ -91,7 +91,7 @@ export function ApkPanel({ projectId }: { projectId: string }) {
             size="sm"
             variant="outline"
             onClick={() => fileInputRef.current?.click()}
-            disabled={uploadApk.isPending}
+            loading={uploadApk.isPending}
           >
             {uploadApk.isPending ? "Uploading…" : "Upload APK"}
           </Button>

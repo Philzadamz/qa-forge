@@ -7,14 +7,15 @@ import { useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 
 import { Badge } from "@/components/ui/badge";
+import { BackButton } from "@/components/back-button";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { API_PREFIX, ApiError, apiFetch } from "@/lib/api";
+import { API_PREFIX, ApiError, apiFetch, apiFetchBlob } from "@/lib/api";
 import { pasteStorySchema, type PasteStoryInput } from "@/lib/schemas/workspace";
 import type {
   GenerationJob,
@@ -91,14 +92,14 @@ function CaseCard({
             </div>
           </div>
           <div className="flex shrink-0 flex-col items-end gap-2">
-            <label className="flex items-center gap-2 text-sm">
+            <label className="hover:bg-muted flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-sm select-none">
               Include
               <Checkbox
                 checked={c.included}
                 onChange={(e) => onToggleInclude(c.id, e.target.checked)}
               />
             </label>
-            <label className="flex items-center gap-2 text-sm">
+            <label className="hover:bg-muted flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-sm select-none">
               Run in Test Lab
               <Checkbox
                 checked={selectedForRun}
@@ -240,12 +241,25 @@ export function SuiteDetailClient({ suiteId }: { suiteId: string }) {
         method: "PATCH",
         body: JSON.stringify({ included }),
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: casesKey }),
+    onMutate: async (vars: { id: string; included: boolean }) => {
+      await queryClient.cancelQueries({ queryKey: casesKey });
+      const previous = queryClient.getQueryData<WorkspaceCase[]>(casesKey);
+      queryClient.setQueryData<WorkspaceCase[]>(casesKey, (old) =>
+        old?.map((c) => (c.id === vars.id ? { ...c, included: vars.included } : c)),
+      );
+      return { previous };
+    },
+    onError: (err: unknown, _vars, ctx) => {
+      if (ctx?.previous) queryClient.setQueryData(casesKey, ctx.previous);
+      setError(describeError(err, "Could not save that change."));
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: casesKey }),
   });
 
   const deleteCase = useMutation({
     mutationFn: (id: string) => apiFetch<void>(`/cases/${id}`, { method: "DELETE" }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: casesKey }),
+    onError: (err: unknown) => setError(describeError(err, "Could not delete the case.")),
   });
 
   const patchCase = useMutation({
@@ -256,7 +270,19 @@ export function SuiteDetailClient({ suiteId }: { suiteId: string }) {
       id: string;
       patch: Partial<Pick<WorkspaceCase, "status" | "actual_result" | "is_regression">>;
     }) => apiFetch<WorkspaceCase>(`/cases/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: casesKey }),
+    onMutate: async ({ id, patch }) => {
+      await queryClient.cancelQueries({ queryKey: casesKey });
+      const previous = queryClient.getQueryData<WorkspaceCase[]>(casesKey);
+      queryClient.setQueryData<WorkspaceCase[]>(casesKey, (old) =>
+        old?.map((c) => (c.id === id ? { ...c, ...patch } : c)),
+      );
+      return { previous };
+    },
+    onError: (err: unknown, _vars, ctx) => {
+      if (ctx?.previous) queryClient.setQueryData(casesKey, ctx.previous);
+      setError(describeError(err, "Could not save that change."));
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: casesKey }),
   });
 
   const draftBug = useMutation({
@@ -333,23 +359,23 @@ export function SuiteDetailClient({ suiteId }: { suiteId: string }) {
     onError: (err: unknown) => setError(describeError(err, "Could not start generation.")),
   });
 
+  const [exporting, setExporting] = useState(false);
+
   async function handleExport() {
     setError(null);
+    setExporting(true);
     try {
-      const res = await fetch(`${API_PREFIX}/suites/${suiteId}/export/xlsx`, {
-        method: "POST",
-        credentials: "include",
-      });
-      if (!res.ok) throw new Error("Export failed");
-      const blob = await res.blob();
+      const blob = await apiFetchBlob(`/suites/${suiteId}/export/xlsx`, { method: "POST" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
       a.download = `${suite?.name ?? "suite"}.xlsx`;
       a.click();
       URL.revokeObjectURL(url);
-    } catch {
-      setError("Could not export the xlsx file.");
+    } catch (err) {
+      setError(describeError(err, "Could not export the xlsx file."));
+    } finally {
+      setExporting(false);
     }
   }
 
@@ -358,32 +384,37 @@ export function SuiteDetailClient({ suiteId }: { suiteId: string }) {
   const defaults = cases?.filter((c) => c.section === "default") ?? [];
   const functional = cases?.filter((c) => c.section === "functional") ?? [];
   const isGenerating = job?.status === "queued" || job?.status === "running";
+  const selectedStories = stories?.filter((s) => selectedStoryIds.includes(s.id)) ?? [];
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
+      <BackButton fallbackHref={`/projects/${suite.project_id}`} label="Back to project" />
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{suite.name}</h1>
           <p className="text-muted-foreground text-sm">
             {String(suite.header_json.project_name_line ?? "")}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button
             variant="outline"
             onClick={() => markAllPassed.mutate()}
-            disabled={markAllPassed.isPending || !cases?.length}
+            loading={markAllPassed.isPending}
+            disabled={!cases?.length}
           >
             Mark all as Passed
           </Button>
           <Button
             variant="outline"
             onClick={() => draftReport.mutate()}
-            disabled={draftReport.isPending}
+            loading={draftReport.isPending}
           >
-            {draftReport.isPending ? "Drafting…" : "Generate Report"}
+            {draftReport.isPending ? "Generating report…" : "Generate Report"}
           </Button>
-          <Button onClick={handleExport}>Download Test Cases (.xlsx)</Button>
+          <Button onClick={handleExport} loading={exporting}>
+            {exporting ? "Preparing file…" : "Download Test Cases (.xlsx)"}
+          </Button>
         </div>
       </div>
 
@@ -410,110 +441,177 @@ export function SuiteDetailClient({ suiteId }: { suiteId: string }) {
       <Card>
         <CardHeader>
           <CardTitle>Generate functional test cases</CardTitle>
+          <CardDescription>
+            Pick the stories to cover, choose how deep to go, then generate. Cases appear below as
+            each feature finishes.
+          </CardDescription>
         </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          <div>
-            <Label>Stories to generate from</Label>
-            <div className="mt-2 flex flex-col gap-1">
-              {stories?.length === 0 && (
-                <p className="text-muted-foreground text-sm">
-                  No stories on this project yet — go back to the project page to add one.
-                </p>
-              )}
-              {stories?.map((s) => (
-                <label key={s.id} className="flex items-center gap-2 text-sm">
-                  <Checkbox
-                    checked={selectedStoryIds.includes(s.id)}
-                    onChange={(e) =>
-                      setSelectedStoryIds((prev) =>
-                        e.target.checked ? [...prev, s.id] : prev.filter((id) => id !== s.id),
-                      )
-                    }
-                  />
-                  {s.title}
-                </label>
-              ))}
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              className="mt-2"
-              onClick={() => setShowPaste((v) => !v)}
-            >
-              {showPaste ? "Cancel" : "Paste a new story"}
-            </Button>
-          </div>
-
-          {showPaste && (
-            <form
-              onSubmit={handlePasteSubmit((values) => pasteStory.mutate(values))}
-              className="flex flex-col gap-3 rounded-md border p-4"
-            >
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="paste-title">Title</Label>
-                <Input
-                  id="paste-title"
-                  {...registerPaste("title")}
-                  aria-invalid={!!pasteErrors.title}
-                />
-              </div>
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="paste-text">Story text</Label>
-                <Textarea
-                  id="paste-text"
-                  rows={6}
-                  {...registerPaste("text")}
-                  aria-invalid={!!pasteErrors.text}
-                />
-              </div>
-              <Button type="submit" disabled={isPasting} className="self-start">
-                {isPasting ? "Saving…" : "Save story"}
+        <CardContent className="flex flex-col gap-6">
+          <section className="flex flex-col gap-3" aria-labelledby="gen-stories">
+            <div className="flex items-center justify-between gap-3">
+              <h3 id="gen-stories" className="text-sm font-semibold">
+                1. Stories
+              </h3>
+              <Button variant="outline" size="sm" onClick={() => setShowPaste((v) => !v)}>
+                {showPaste ? "Cancel" : "Paste a new story"}
               </Button>
-            </form>
-          )}
-
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="coverage">Coverage depth</Label>
-              <Select
-                id="coverage"
-                value={coverageDepth}
-                onChange={(e) =>
-                  setCoverageDepth(e.target.value as (typeof COVERAGE_DEPTHS)[number])
-                }
-              >
-                {COVERAGE_DEPTHS.map((d) => (
-                  <option key={d} value={d}>
-                    {d}
-                  </option>
-                ))}
-              </Select>
             </div>
+
+            {stories?.length === 0 && !showPaste && (
+              <div className="text-muted-foreground rounded-md border border-dashed p-6 text-center text-sm">
+                This project has no stories yet. Paste one above to get started.
+              </div>
+            )}
+
+            {stories && stories.length > 0 && (
+              <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                {stories.map((story) => {
+                  const checked = selectedStoryIds.includes(story.id);
+                  return (
+                    <label
+                      key={story.id}
+                      className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors ${
+                        checked ? "border-primary bg-primary/5" : "hover:bg-muted/60"
+                      }`}
+                    >
+                      <Checkbox
+                        className="mt-0.5 h-5 w-5"
+                        checked={checked}
+                        onChange={(e) =>
+                          setSelectedStoryIds((prev) =>
+                            e.target.checked
+                              ? [...prev, story.id]
+                              : prev.filter((id) => id !== story.id),
+                          )
+                        }
+                      />
+                      <span className="flex min-w-0 flex-col">
+                        <span className="truncate text-sm font-medium">{story.title}</span>
+                        <span className="text-muted-foreground text-xs">
+                          {story.source} · {new Date(story.created_at).toLocaleDateString()}
+                        </span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+
+            {showPaste && (
+              <form
+                onSubmit={handlePasteSubmit((values) => pasteStory.mutate(values))}
+                className="bg-muted/40 flex flex-col gap-3 rounded-lg border p-4"
+              >
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="paste-title">Title</Label>
+                  <Input
+                    id="paste-title"
+                    {...registerPaste("title")}
+                    aria-invalid={!!pasteErrors.title}
+                  />
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="paste-text">Story text</Label>
+                  <Textarea
+                    id="paste-text"
+                    rows={6}
+                    {...registerPaste("text")}
+                    aria-invalid={!!pasteErrors.text}
+                  />
+                </div>
+                <Button type="submit" loading={isPasting} className="self-start">
+                  {isPasting ? "Saving story…" : "Save story"}
+                </Button>
+              </form>
+            )}
+          </section>
+
+          <section className="flex flex-col gap-3" aria-labelledby="gen-settings">
+            <h3 id="gen-settings" className="text-sm font-semibold">
+              2. Settings
+            </h3>
+            <div role="radiogroup" aria-label="Coverage depth" className="grid grid-cols-3 gap-2">
+              {COVERAGE_DEPTHS.map((d) => {
+                const active = coverageDepth === d;
+                return (
+                  <button
+                    key={d}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => setCoverageDepth(d)}
+                    className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+                      active
+                        ? "border-primary bg-primary text-primary-foreground"
+                        : "hover:bg-muted"
+                    }`}
+                  >
+                    {d}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-muted-foreground text-xs">
+              {coverageDepth === "Essential" && "Core happy paths and the most important failures."}
+              {coverageDepth === "Standard" &&
+                "Happy paths, validation, and the common failure modes."}
+              {coverageDepth === "Exhaustive" &&
+                "Edge cases, boundaries, and every failure mode the story implies."}
+            </p>
             <div className="flex flex-col gap-2">
               <Label htmlFor="context">Additional context (optional)</Label>
               <Input
                 id="context"
+                placeholder="e.g. Focus on the mobile app; the OTP step is out of scope"
                 value={additionalContext}
                 onChange={(e) => setAdditionalContext(e.target.value)}
               />
             </div>
-          </div>
+          </section>
 
-          <Button
-            onClick={() => startGeneration.mutate()}
-            disabled={selectedStoryIds.length === 0 || isGenerating}
-            className="self-start"
-          >
-            {isGenerating ? "Generating…" : "Generate Functional Test Cases"}
-          </Button>
-
-          {progressLines.length > 0 && (
-            <div className="bg-muted rounded-md p-3 text-sm">
-              {progressLines.map((line, i) => (
-                <div key={i}>{line}</div>
-              ))}
+          <section className="flex flex-col gap-3" aria-labelledby="gen-run">
+            <h3 id="gen-run" className="text-sm font-semibold">
+              3. Generate
+            </h3>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                onClick={() => startGeneration.mutate()}
+                loading={startGeneration.isPending || isGenerating}
+                disabled={selectedStoryIds.length === 0}
+              >
+                {isGenerating
+                  ? "Generating…"
+                  : `Generate from ${selectedStoryIds.length || "selected"} ${
+                      selectedStoryIds.length === 1 ? "story" : "stories"
+                    }`}
+              </Button>
+              {selectedStories.length > 0 && (
+                <span className="text-muted-foreground text-xs">
+                  {selectedStories.map((s) => s.title).join(" · ")}
+                </span>
+              )}
             </div>
-          )}
+
+            {progressLines.length > 0 && (
+              <ol className="bg-muted/40 flex flex-col gap-2 rounded-lg border p-4 text-sm">
+                {progressLines.map((line, i) => (
+                  <li key={i} className="flex items-start gap-2">
+                    <span
+                      aria-hidden="true"
+                      className={`mt-1 inline-block h-2 w-2 shrink-0 rounded-full ${
+                        line.startsWith("Failed")
+                          ? "bg-destructive"
+                          : line === "Done."
+                            ? "bg-emerald-500"
+                            : "bg-primary"
+                      }`}
+                    />
+                    {line}
+                  </li>
+                ))}
+              </ol>
+            )}
+          </section>
         </CardContent>
       </Card>
 

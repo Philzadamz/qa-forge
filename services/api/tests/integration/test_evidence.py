@@ -159,3 +159,41 @@ def test_evidence_in_xlsx_export(admin_client: TestClient, tmp_path: Path) -> No
     assert ws["H13"].value == "'Default Scenarios'!A1"
     assert "Default Scenarios" in wb.sheetnames
     assert len(wb["Default Scenarios"]._images) == 1
+
+
+def _case_for_upload(admin_client: TestClient) -> dict:
+    project = _create_project(admin_client)
+    type_obj = _create_type_with_one_default(admin_client)
+    suite = admin_client.post(
+        "/api/v1/suites",
+        json={
+            "project_id": project["id"],
+            "type_id": type_obj["id"],
+            "name": "S",
+            "header": {"project_name_line": "X"},
+        },
+    ).json()
+    return admin_client.get(f"/api/v1/suites/{suite['id']}/cases").json()[0]
+
+
+def test_evidence_rejects_text_spoofed_as_png(admin_client: TestClient) -> None:
+    case = _case_for_upload(admin_client)
+    resp = admin_client.post(
+        f"/api/v1/cases/{case['id']}/evidence",
+        files={"file": ("looks-fine.png", b"<script>alert(1)</script>", "image/png")},
+    )
+    assert resp.status_code == 400
+
+
+def test_evidence_stores_sniffed_extension_not_the_client_filename(
+    admin_client: TestClient,
+) -> None:
+    case = _case_for_upload(admin_client)
+    resp = admin_client.post(
+        f"/api/v1/cases/{case['id']}/evidence",
+        files={"file": ("shot.html", _png_bytes(), "text/plain")},
+    )
+    assert resp.status_code == 201, resp.text
+    download = admin_client.get(f"/api/v1/evidence/{resp.json()['id']}/file")
+    assert download.status_code == 200
+    assert download.headers["content-type"] == "image/png"

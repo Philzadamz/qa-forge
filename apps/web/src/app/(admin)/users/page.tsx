@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { ApiError, apiFetch } from "@/lib/api";
@@ -133,9 +134,9 @@ export default function UsersPage() {
               </div>
               <div className="flex flex-col gap-2 md:col-span-2">
                 <Label htmlFor="password">Initial password</Label>
-                <Input
+                <PasswordInput
                   id="password"
-                  type="password"
+
                   {...register("password")}
                   aria-invalid={!!errors.password}
                 />
@@ -143,7 +144,7 @@ export default function UsersPage() {
                   <p className="text-destructive text-sm">{errors.password.message}</p>
                 )}
               </div>
-              <Button type="submit" disabled={isSubmitting} className="self-start md:col-span-2">
+              <Button type="submit" loading={isSubmitting} className="self-start md:col-span-2">
                 {isSubmitting ? "Creating…" : "Create user"}
               </Button>
             </form>
@@ -185,8 +186,7 @@ export default function UsersPage() {
                 </Button>
                 {resettingId === u.id ? (
                   <div className="flex items-center gap-2">
-                    <Input
-                      type="password"
+                    <PasswordInput
                       placeholder="New password"
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
